@@ -38,7 +38,7 @@ Run the built-in system diagnostics probe from terminal or browser:
 ### 2.2 AI Provider Fallback / API Key Missing
 **Symptom**: Responses indicate local fallback or "API key is not configured".
 **Solution**:
-1. Verify that your `.env` file exists at `AI/Backend/DR-doom-Day-2-Backend/.env` (or root `.env`).
+1. Verify that your `.env` file exists at `backend/.env` (or root `.env`).
 2. Ensure `GOOGLE_API_KEY`, `GROQ_API_KEY`, or `OPENAI_API_KEY` contains a valid key without trailing quotes.
 3. Restart the backend process.
 

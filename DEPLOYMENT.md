@@ -22,7 +22,7 @@ This guide details deployment options for running JARVIS in production, ranging 
 ### 2.1 Backend Deployment with Systemd / Supervisord
 1. Prepare python virtual environment:
    ```bash
-   cd AI/Backend/DR-doom-Day-2-Backend
+    cd backend
    python -m venv .venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\Activate.ps1
    pip install --upgrade pip

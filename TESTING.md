@@ -7,7 +7,7 @@ This document outlines testing standards, automated test suites, end-to-end eval
 ## 1. Test Architecture
 
 JARVIS 2.0 maintains a dual-layer test suite:
-1. **Backend Integration & Unit Tests (Pytest)**: Located in `AI/Backend/DR-doom-Day-2-Backend/tests/`
+1. **Backend Integration & Unit Tests (Pytest)**: Located in `backend/tests/`
 2. **Frontend Type & Build Validation (TypeScript + Vite)**: Located in `jarvis-frontend/`
 
 ---
@@ -29,7 +29,7 @@ JARVIS 2.0 maintains a dual-layer test suite:
 
 ### Running the Test Suite:
 ```bash
-cd AI/Backend/DR-doom-Day-2-Backend
+cd backend
 python -m pytest -v
 ```
 

@@ -12,7 +12,7 @@ git clone https://github.com/your-repo/JARVIS.git
 cd JARVIS
 
 # 1. Backend Setup
-cd AI/Backend/DR-doom-Day-2-Backend
+cd backend
 python -m venv .venv
 # Activate virtual environment
 source .venv/bin/activate  # Or on Windows: .venv\Scripts\Activate.ps1
@@ -53,7 +53,7 @@ To register a new capability:
 
 ### Backend Tests (pytest)
 ```bash
-cd AI/Backend/DR-doom-Day-2-Backend
+cd backend
 python -m pytest -v
 ```
 

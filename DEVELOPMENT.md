@@ -8,7 +8,7 @@ This guide details local development workflows, adding custom agents and tools, 
 
 ```text
 JARVIS/
-├── AI/Backend/DR-doom-Day-2-Backend/   # FastAPI Backend Core
+├── backend/   # FastAPI Backend Core
 │   ├── app/
 │   │   ├── api/                       # REST endpoint routers
 │   │   ├── services/

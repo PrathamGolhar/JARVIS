@@ -21,11 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY AI/Backend/DR-doom-Day-2-Backend/requirements.txt ./
+COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend application
-COPY AI/Backend/DR-doom-Day-2-Backend/app ./app
+COPY backend/app ./app
 
 # Copy built frontend assets
 COPY --from=frontend-builder /app/frontend/dist ./static

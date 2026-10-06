@@ -8,7 +8,7 @@ Write-Host "        INITIALIZING JARVIS CORE         " -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
 $root = $PSScriptRoot
-$backendDir = Join-Path $root "AI\Backend\DR-doom-Day-2-Backend"
+$backendDir = Join-Path $root "backend"
 $frontendDir = Join-Path $root "jarvis-frontend"
 
 # 1. Launch FastAPI Backend

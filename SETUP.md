@@ -22,7 +22,7 @@ cd JARVIS
 
 ### 2.1 Backend Setup
 ```bash
-cd AI/Backend/DR-doom-Day-2-Backend
+cd backend
 
 # (Optional) Create and activate virtual environment
 python -m venv venv
@@ -45,10 +45,10 @@ npm install
 
 ## 3. Environment Variables Configuration
 
-Copy `.env.example` to `.env` in `AI/Backend/DR-doom-Day-2-Backend/`:
+Copy `.env.example` to `.env` in `backend/`:
 
 ```bash
-cd ../AI/Backend/DR-doom-Day-2-Backend
+cd ../backend
 cp .env.example .env
 ```
 
@@ -71,7 +71,7 @@ JARVIS_PERMISSION_MODE=assisted
 
 ### Start Backend
 ```bash
-cd AI/Backend/DR-doom-Day-2-Backend
+cd backend
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload
 ```
 
@@ -90,6 +90,6 @@ Open `http://localhost:5173` in your browser.
 
 To verify full system integrity:
 ```bash
-cd AI/Backend/DR-doom-Day-2-Backend
+cd backend
 python -m pytest -v
 ```

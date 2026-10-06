@@ -6,7 +6,7 @@ echo "        INITIALIZING JARVIS CORE         "
 echo "========================================="
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-BACKEND_DIR="$DIR/AI/Backend/DR-doom-Day-2-Backend"
+BACKEND_DIR="$DIR/backend"
 FRONTEND_DIR="$DIR/jarvis-frontend"
 
 # Check Python environment
