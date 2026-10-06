@@ -1,0 +1,44 @@
+services:
+  jarvis-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jarvis-ai-assistant
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      - PORT=8765
+      - HOST=0.0.0.0
+      - AI_PROVIDER=auto
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      - EDGE_TTS_VOICE=${EDGE_TTS_VOICE:-en-US-ChristopherNeural}
+      - DATABASE_URL=sqlite:////app/data/jarvis.db
+      - JARVIS_SAFETY_TIER=ASSISTED
+      - JARVIS_SANDBOX_TIMEOUT=15
+    volumes:
+      - jarvis-data:/app/data
+
+  jarvis-frontend-dev:
+    image: node:20-alpine
+    container_name: jarvis-frontend-dev
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./jarvis-frontend:/app
+      - /app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    profiles:
+      - dev
+
+volumes:
+  jarvis-data:
+    driver: local
