@@ -113,29 +113,38 @@ async def list_generated_files() -> list[GeneratedFileItem]:
 @router.get("/download/{filename}")
 async def download_file(filename: str):
     """
-    Download a file from either generated/ or uploads/ directory.
+    Download a file from either generated/ or uploads/ directory with path traversal protection.
     """
-    # Check generated files
-    target = settings.generated_dir / filename
-    if not target.exists():
-        target = settings.uploads_dir / filename
-    if not target.exists():
-        raise HTTPException(status_code=404, detail=f"File '{filename}' not found.")
+    safe_name = Path(filename).name
+    if not safe_name or safe_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+
+    target = (settings.generated_dir / safe_name).resolve()
+    if not target.exists() or not (str(target).startswith(str(settings.generated_dir.resolve()))):
+        target = (settings.uploads_dir / safe_name).resolve()
+        if not target.exists() or not (str(target).startswith(str(settings.uploads_dir.resolve()))):
+            raise HTTPException(status_code=404, detail=f"File '{filename}' not found.")
 
     mime_type, _ = mimetypes.guess_type(str(target))
     return FileResponse(
         path=str(target),
         media_type=mime_type or "application/octet-stream",
-        filename=filename,
+        filename=safe_name,
     )
 
 
 @router.delete("/{filename}")
 async def delete_file(filename: str):
-    target = settings.generated_dir / filename
-    if not target.exists():
-        target = settings.uploads_dir / filename
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="File not found.")
+    safe_name = Path(filename).name
+    if not safe_name or safe_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+
+    target = (settings.generated_dir / safe_name).resolve()
+    if not target.exists() or not (str(target).startswith(str(settings.generated_dir.resolve()))):
+        target = (settings.uploads_dir / safe_name).resolve()
+        if not target.exists() or not (str(target).startswith(str(settings.uploads_dir.resolve()))):
+            raise HTTPException(status_code=404, detail="File not found.")
+
     target.unlink()
-    return {"ok": True, "message": f"File '{filename}' deleted successfully."}
+    return {"ok": True, "message": f"File '{safe_name}' deleted successfully."}
+

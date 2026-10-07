@@ -9,6 +9,7 @@ import logging
 import re
 from typing import Any
 
+from app.services.ai.anthropic_provider import AnthropicProvider
 from app.services.ai.base import AIChatResponse, AIProvider
 from app.services.ai.factory import get_ai_provider
 from app.services.ai.gemini_provider import GeminiProvider
@@ -155,6 +156,16 @@ class ModelRouter:
                 provider_name="openai",
                 recommended_model=openai_prov.model,
                 reason="OpenAI GPT reasoning fallback",
+                estimated_latency_tier="standard",
+            )
+
+        anthropic_prov = AnthropicProvider()
+        if anthropic_prov.is_available():
+            return RouteDecision(
+                category=category,
+                provider_name="anthropic",
+                recommended_model=anthropic_prov.model,
+                reason="Anthropic Claude reasoning fallback",
                 estimated_latency_tier="standard",
             )
 

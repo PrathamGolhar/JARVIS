@@ -217,6 +217,38 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "generate_word_doc",
+            "description": "Generate a professional Microsoft Word (.docx) document from markdown-formatted content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Document title"},
+                    "content_markdown": {"type": "string", "description": "Markdown formatted content"},
+                    "subtitle": {"type": "string", "description": "Optional subtitle"},
+                    "author": {"type": "string", "description": "Optional author name"},
+                },
+                "required": ["title", "content_markdown"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "deep_web_research",
+            "description": "Conduct comprehensive multi-source web research on any topic with live DuckDuckGo search, source scraping, and AI synthesis.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Research topic or question"},
+                    "depth": {"type": "string", "enum": ["quick", "deep", "comprehensive"], "description": "Research depth"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_reminder",
             "description": "Create a scheduled reminder for the user.",
             "parameters": {
@@ -241,6 +273,8 @@ TOOL_RISK_MAP = {
     "read_file": RiskLevel.LOW,
     "generate_presentation": RiskLevel.LOW,
     "generate_pdf_report": RiskLevel.LOW,
+    "generate_word_doc": RiskLevel.LOW,
+    "deep_web_research": RiskLevel.LOW,
     "execute_python_code": RiskLevel.LOW,
     "set_user_preference": RiskLevel.LOW,
     "create_reminder": RiskLevel.LOW,
@@ -328,6 +362,38 @@ def execute_tool_call(tool_name: str, raw_arguments: str | dict[str, Any]) -> di
         if tool_name == "create_reminder":
             rem = reminder_service.add_reminder(args.get("title", ""), args.get("scheduled_time", ""))
             return {"ok": True, "reminder": rem.model_dump(by_alias=True), "message": f"Reminder '{rem.title}' scheduled for {rem.scheduled_time}."}
+
+        if tool_name == "generate_word_doc":
+            docx_path = generate_docx_document(
+                title=args.get("title", "Document"),
+                content_markdown=args.get("content_markdown", ""),
+                subtitle=args.get("subtitle", ""),
+                author=args.get("author", "JARVIS"),
+            )
+            return {
+                "ok": True,
+                "file": {
+                    "filename": docx_path.name,
+                    "downloadUrl": f"/api/files/download/{docx_path.name}",
+                    "sizeBytes": docx_path.stat().st_size,
+                },
+                "message": f"Word document '{docx_path.name}' generated successfully.",
+            }
+
+        if tool_name == "deep_web_research":
+            research = perform_deep_research(
+                query=args.get("query", ""),
+                depth=args.get("depth", "deep"),
+            )
+            return {
+                "ok": True,
+                "topic": research.topic,
+                "summary": research.summary,
+                "findings": research.findingsMarkdown[:3000],
+                "keyTakeaways": research.keyTakeaways,
+                "citations": [c.model_dump() for c in research.citations[:8]],
+                "message": f"Deep research on '{research.topic}' completed with {len(research.citations)} verified sources.",
+            }
 
         return {"ok": False, "error": f"Tool '{tool_name}' is not recognized."}
     except Exception as exc:

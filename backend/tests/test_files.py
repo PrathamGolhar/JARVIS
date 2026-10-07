@@ -27,3 +27,13 @@ def test_file_upload_rejects_empty_file() -> None:
         files={"file": ("empty.txt", io.BytesIO(b""), "text/plain")},
     )
     assert response.status_code == 422
+
+
+def test_file_download_path_traversal_protection() -> None:
+    # Attempt path traversal
+    response = client.get("/api/files/download/../../../../etc/passwd")
+    assert response.status_code in (400, 404)
+
+    response = client.delete("/api/files/../../../../etc/passwd")
+    assert response.status_code in (400, 404)
+

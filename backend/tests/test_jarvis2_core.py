@@ -31,8 +31,14 @@ def test_task_classifier_and_model_router() -> None:
 
     # 5. Route decision
     route = ModelRouter.route("Explain quantum computing")
-    assert route.provider_name in ["gemini", "groq", "openai", "local"]
+    assert route.provider_name in ["gemini", "groq", "openai", "anthropic", "local"]
     assert route.recommended_model
+
+    # 6. Anthropic Provider instance availability test
+    from app.services.ai.anthropic_provider import AnthropicProvider
+    anthropic = AnthropicProvider(api_key="test-key-mock")
+    assert anthropic.name == "anthropic"
+    assert anthropic.is_available() is True
 
 
 @pytest.mark.anyio

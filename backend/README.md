@@ -10,8 +10,8 @@ The backend is a small FastAPI service that keeps credentials server-side and ex
 ## Install and run
 
 ```powershell
-git clone https://github.com/pruthvi828/DR-doom-Day-2-Backend.git
-cd DR-doom-Day-2-Backend
+git clone https://github.com/PrathamGolhar/JARVIS.git
+cd JARVIS/backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt

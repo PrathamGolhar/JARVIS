@@ -1,5 +1,7 @@
+import ipaddress
 import json
 import logging
+import socket
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -14,7 +16,36 @@ from app.services.document_generation.pdf_generator import generate_pdf_document
 logger = logging.getLogger("jarvis.researcher")
 
 
+def is_safe_external_url(url: str) -> bool:
+    """Validate that a URL is a safe public HTTP/HTTPS endpoint (SSRF protection)."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            return False
+
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            ip_str = socket.gethostbyname(hostname)
+            ip = ipaddress.ip_address(ip_str)
+
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def extract_webpage_text(url: str, max_chars: int = 3000) -> str:
+    if not is_safe_external_url(url):
+        logger.warning("SSRF Protection: Blocked extraction of unsafe URL: %s", url)
+        return ""
+
     try:
         resp = requests.get(
             url,
@@ -30,6 +61,7 @@ def extract_webpage_text(url: str, max_chars: int = 3000) -> str:
     except Exception as exc:
         logger.debug("Failed scraping %s: %s", url, exc)
     return ""
+
 
 
 def perform_deep_research(

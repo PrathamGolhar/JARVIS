@@ -1,8 +1,9 @@
-from fastapi import APIRouter
 from pathlib import Path
 import re
+from fastapi import APIRouter
 
 from app.schemas import SettingsStatusResponse, SettingsUpdateRequest
+from app.services.ai.anthropic_provider import AnthropicProvider
 from app.services.ai.factory import get_ai_provider, list_configured_providers
 from app.services.ai.gemini_provider import GeminiProvider
 from app.services.ai.groq_provider import GroqProvider
@@ -40,7 +41,7 @@ async def get_settings() -> SettingsStatusResponse:
         geminiConfigured=GeminiProvider().is_available(),
         groqConfigured=GroqProvider().is_available(),
         openaiConfigured=OpenAIProvider().is_available(),
-        anthropicConfigured=bool(settings.anthropic_api_key),
+        anthropicConfigured=AnthropicProvider().is_available(),
         elevenlabsConfigured=bool(settings.elevenlabs_api_key),
         permissionMode=settings.permission_mode,
         wakeWordEnabled=True,
@@ -53,19 +54,24 @@ async def update_settings(request: SettingsUpdateRequest) -> SettingsStatusRespo
         settings.ai_provider = request.ai_provider
         _persist_env_key("JARVIS_AI_PROVIDER", request.ai_provider)
     if request.gemini_api_key is not None and request.gemini_api_key.strip():
-        settings.google_api_key = request.gemini_api_key
+        settings.gemini_api_key = request.gemini_api_key
+        _persist_env_key("JARVIS_GEMINI_API_KEY", request.gemini_api_key)
         _persist_env_key("GOOGLE_API_KEY", request.gemini_api_key)
     if request.groq_api_key is not None and request.groq_api_key.strip():
         settings.groq_api_key = request.groq_api_key
+        _persist_env_key("JARVIS_GROQ_API_KEY", request.groq_api_key)
         _persist_env_key("GROQ_API_KEY", request.groq_api_key)
     if request.openai_api_key is not None and request.openai_api_key.strip():
         settings.openai_api_key = request.openai_api_key
+        _persist_env_key("JARVIS_OPENAI_API_KEY", request.openai_api_key)
         _persist_env_key("OPENAI_API_KEY", request.openai_api_key)
     if request.anthropic_api_key is not None and request.anthropic_api_key.strip():
         settings.anthropic_api_key = request.anthropic_api_key
+        _persist_env_key("JARVIS_ANTHROPIC_API_KEY", request.anthropic_api_key)
         _persist_env_key("ANTHROPIC_API_KEY", request.anthropic_api_key)
     if request.elevenlabs_api_key is not None and request.elevenlabs_api_key.strip():
         settings.elevenlabs_api_key = request.elevenlabs_api_key
+        _persist_env_key("JARVIS_ELEVENLABS_API_KEY", request.elevenlabs_api_key)
         _persist_env_key("ELEVENLABS_API_KEY", request.elevenlabs_api_key)
     if request.permission_mode is not None:
         settings.permission_mode = request.permission_mode
