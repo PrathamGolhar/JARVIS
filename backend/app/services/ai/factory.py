@@ -13,50 +13,40 @@ logger = logging.getLogger("jarvis.ai_factory")
 def get_ai_provider(preferred: str | None = None) -> AIProvider:
     """
     Resolve the active AI provider.
-    If 'auto' or unspecified, selects the best configured provider:
-    Gemini -> Groq -> OpenAI -> Anthropic -> Local Fallback.
+
+    In auto mode, select the best configured provider:
+    Gemini -> Groq -> OpenAI -> Anthropic -> Local fallback.
+
+    For an explicitly requested provider, fail loudly if it is not configured so callers
+    can surface the real problem instead of silently falling back to another provider.
     """
     pref = (preferred or settings.ai_provider or "auto").lower()
-
-    if pref == "gemini":
-        prov = GeminiProvider()
-        if prov.is_available():
-            return prov
-
-    if pref == "groq":
-        prov = GroqProvider()
-        if prov.is_available():
-            return prov
-
-    if pref == "openai":
-        prov = OpenAIProvider()
-        if prov.is_available():
-            return prov
-
-    if pref == "anthropic":
-        prov = AnthropicProvider()
-        if prov.is_available():
-            return prov
 
     if pref == "local":
         return LocalProvider()
 
+    provider_map = {
+        "gemini": GeminiProvider,
+        "groq": GroqProvider,
+        "openai": OpenAIProvider,
+        "anthropic": AnthropicProvider,
+    }
+
+    if pref in provider_map:
+        provider = provider_map[pref]()
+        if provider.is_available():
+            return provider
+        if preferred is not None or settings.ai_provider.lower() == pref:
+            raise RuntimeError(f"Selected AI provider '{pref}' is not configured.")
+
+    if pref not in {"auto", "", *provider_map.keys()}:
+        logger.warning("Unknown AI provider requested: %s. Falling back to auto selection.", pref)
+
     # Auto fallback order: Gemini -> Groq -> OpenAI -> Anthropic -> Local
-    gemini = GeminiProvider()
-    if gemini.is_available():
-        return gemini
-
-    groq = GroqProvider()
-    if groq.is_available():
-        return groq
-
-    openai = OpenAIProvider()
-    if openai.is_available():
-        return openai
-
-    anthropic = AnthropicProvider()
-    if anthropic.is_available():
-        return anthropic
+    for provider_name in ("gemini", "groq", "openai", "anthropic"):
+        provider = provider_map[provider_name]()
+        if provider.is_available():
+            return provider
 
     return LocalProvider()
 
