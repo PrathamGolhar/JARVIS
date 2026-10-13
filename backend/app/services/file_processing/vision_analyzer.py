@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 import requests
 
+from app.endpoints import GEMINI_API_BASE_URL
 from app.services.ai.factory import get_ai_provider
 from app.settings import settings
 
@@ -29,7 +30,7 @@ def analyze_image_or_diagram(
             suffix = path.suffix.lower().lstrip(".")
             mime_type = f"image/{'jpeg' if suffix in ('jpg', 'jpeg') else suffix}"
 
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent?key={settings.google_api_key}"
+            url = f"{GEMINI_API_BASE_URL}/models/{settings.gemini_model}:generateContent?key={settings.google_api_key}"
             payload = {
                 "contents": [
                     {

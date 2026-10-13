@@ -22,4 +22,4 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$frontendDir'
 Write-Host "`nJARVIS is now online and operational!" -ForegroundColor Cyan
 Write-Host "Backend API Health: http://127.0.0.1:8765/api/health" -ForegroundColor Yellow
 Write-Host "Backend Docs (Swagger): http://127.0.0.1:8765/docs" -ForegroundColor Yellow
-Write-Host "Frontend HUD:       http://localhost:5173" -ForegroundColor Yellow
+Write-Host "Frontend HUD:       http://localhost:1420" -ForegroundColor Yellow

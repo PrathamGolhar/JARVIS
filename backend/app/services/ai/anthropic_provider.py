@@ -3,6 +3,7 @@ import logging
 from typing import Any
 import requests
 
+from app.endpoints import ANTHROPIC_MESSAGES_URL
 from app.services.ai.base import AIChatResponse, AIProvider, ToolCall
 from app.settings import settings
 
@@ -11,7 +12,7 @@ logger = logging.getLogger("jarvis.anthropic")
 
 class AnthropicProvider(AIProvider):
     name = "anthropic"
-    URL = "https://api.anthropic.com/v1/messages"
+    URL = ANTHROPIC_MESSAGES_URL
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         self.api_key = api_key or settings.anthropic_api_key

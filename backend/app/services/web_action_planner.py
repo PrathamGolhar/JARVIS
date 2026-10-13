@@ -5,6 +5,7 @@ from urllib.parse import quote_plus, urlparse
 
 import requests
 
+from app.endpoints import GROQ_CHAT_URL
 from app.settings import settings
 
 PlanKind = Literal["web_search", "youtube_search", "spotify_search"]
@@ -24,7 +25,7 @@ def _model_classification(text: str) -> dict[str, str] | None:
 
     try:
         response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
+            GROQ_CHAT_URL,
             headers={
                 "Authorization": f"Bearer {settings.groq_api_key}",
                 "Content-Type": "application/json",

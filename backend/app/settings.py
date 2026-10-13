@@ -112,7 +112,7 @@ class Settings:
             _get_first_env(
                 "JARVIS_ALLOWED_ORIGINS",
                 "CORS_ORIGINS",
-                default="http://localhost:1420,http://127.0.0.1:1420,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000",
+                default="http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://localhost:1420,http://127.0.0.1:1420",
             )
         )
     )
@@ -157,6 +157,100 @@ class Settings:
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
         self.generated_dir.mkdir(parents=True, exist_ok=True)
         self.projects_dir.mkdir(parents=True, exist_ok=True)
+
+    def validate_configuration(self) -> dict[str, Any]:
+        """
+        Generate a comprehensive, safe configuration report.
+        NEVER returns or prints actual API keys or credentials.
+        """
+        gemini_cfg = bool(self.gemini_api_key and self.gemini_api_key.strip())
+        groq_cfg = bool(self.groq_api_key and self.groq_api_key.strip())
+        openai_cfg = bool(self.openai_api_key and self.openai_api_key.strip())
+        anthropic_cfg = bool(self.anthropic_api_key and self.anthropic_api_key.strip())
+        elevenlabs_cfg = bool(self.elevenlabs_api_key and self.elevenlabs_api_key.strip())
+
+        # Determine effective active AI provider
+        configured_list = []
+        if gemini_cfg:
+            configured_list.append("gemini")
+        if groq_cfg:
+            configured_list.append("groq")
+        if openai_cfg:
+            configured_list.append("openai")
+        if anthropic_cfg:
+            configured_list.append("anthropic")
+        configured_list.append("local")
+
+        effective_provider = self.ai_provider
+        if effective_provider == "auto":
+            effective_provider = configured_list[0] if configured_list else "local"
+
+        backend_url = f"http://{self.backend_host}:{self.backend_port}"
+
+        # Sanitize database URL for reporting (hide passwords if any)
+        sanitized_db = self.database_url
+        if "@" in sanitized_db:
+            # Mask user:pass@
+            prefix, rest = sanitized_db.split("@", 1)
+            scheme = prefix.split("://")[0]
+            sanitized_db = f"{scheme}://***:***@{rest}"
+
+        return {
+            "environment": self.env,
+            "backend_url": backend_url,
+            "allowed_origins": list(self.allowed_origins),
+            "ai_providers": {
+                "selected": self.ai_provider,
+                "effective_active": effective_provider,
+                "configured_providers": configured_list,
+                "gemini": {
+                    "status": "CONFIGURED" if gemini_cfg else "NOT CONFIGURED",
+                    "configured": gemini_cfg,
+                    "model": self.gemini_model,
+                },
+                "groq": {
+                    "status": "CONFIGURED" if groq_cfg else "NOT CONFIGURED",
+                    "configured": groq_cfg,
+                    "model": self.groq_chat_model,
+                    "fallback_model": self.groq_fallback_model,
+                },
+                "openai": {
+                    "status": "CONFIGURED" if openai_cfg else "NOT CONFIGURED",
+                    "configured": openai_cfg,
+                    "model": self.openai_model,
+                },
+                "anthropic": {
+                    "status": "CONFIGURED" if anthropic_cfg else "NOT CONFIGURED",
+                    "configured": anthropic_cfg,
+                    "model": self.anthropic_model,
+                },
+                "elevenlabs": {
+                    "status": "CONFIGURED" if elevenlabs_cfg else "NOT CONFIGURED",
+                    "configured": elevenlabs_cfg,
+                },
+                "local": {
+                    "status": "CONFIGURED",
+                    "configured": True,
+                    "model": "local-rule-engine",
+                },
+            },
+            "speech": {
+                "stt_provider": self.stt_provider,
+                "stt_configured": groq_cfg if self.stt_provider == "groq-whisper" else True,
+                "tts_provider": self.tts_provider,
+                "tts_voice": self.default_tts_voice,
+            },
+            "database": {
+                "url": sanitized_db,
+                "type": "SQLite" if "sqlite" in sanitized_db.lower() else "SQL",
+            },
+            "features": {
+                "web_search_enabled": self.web_search_enabled,
+                "local_actions_enabled": self.local_actions_enabled,
+                "permission_mode": self.permission_mode,
+                "sandbox_timeout": self.sandbox_timeout_seconds,
+            },
+        }
 
 
 settings = Settings()

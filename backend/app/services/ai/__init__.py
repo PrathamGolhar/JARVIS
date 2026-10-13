@@ -1,5 +1,6 @@
+from app.services.ai.anthropic_provider import AnthropicProvider
 from app.services.ai.base import AIChatResponse, AIProvider, ToolCall
-from app.services.ai.factory import get_ai_provider, list_configured_providers
+from app.services.ai.factory import get_active_provider_safe, get_ai_provider, list_configured_providers
 from app.services.ai.gemini_provider import GeminiProvider
 from app.services.ai.groq_provider import GroqProvider
 from app.services.ai.local_provider import LocalProvider
@@ -12,7 +13,9 @@ __all__ = [
     "GeminiProvider",
     "GroqProvider",
     "OpenAIProvider",
+    "AnthropicProvider",
     "LocalProvider",
     "get_ai_provider",
+    "get_active_provider_safe",
     "list_configured_providers",
 ]

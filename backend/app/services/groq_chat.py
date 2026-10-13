@@ -1,8 +1,7 @@
 import requests
 
+from app.endpoints import GROQ_CHAT_URL
 from app.settings import settings
-
-GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 SYSTEM_PROMPT = (
     "You are Jarvis, an elite, highly advanced AI personal assistant for Windows dedicated exclusively to your Master.\n\n"
     "1. Persona & Tone:\n"

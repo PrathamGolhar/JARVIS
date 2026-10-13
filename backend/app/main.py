@@ -1,8 +1,11 @@
 from contextlib import asynccontextmanager
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.api.automation import router as automation_router
 from app.api.capabilities import router as capabilities_router
@@ -78,3 +81,19 @@ app.include_router(web_actions_router)
 async def health_api_alias() -> dict[str, str]:
     return {"status": "ok"}
 
+
+# ---------------------------------------------------------------------------
+# Production: serve the pre-built React frontend from /app/static
+# This activates only when the dist directory exists (i.e., inside Docker).
+# In local dev the Vite proxy handles /api routing; the frontend runs on 1420.
+# ---------------------------------------------------------------------------
+_STATIC_DIR = Path("/app/static")
+if _STATIC_DIR.is_dir():
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="frontend-assets")
+
+    # SPA catch-all: every non-/api path serves index.html so React Router works
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str) -> FileResponse:
+        index = _STATIC_DIR / "index.html"
+        return FileResponse(str(index))

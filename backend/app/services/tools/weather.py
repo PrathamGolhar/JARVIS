@@ -3,6 +3,8 @@ from urllib.parse import quote_plus
 
 import requests
 
+from app.endpoints import OPEN_METEO_FORECAST_URL, OPEN_METEO_GEOCODING_URL
+
 WEATHER_CODE_MAP = {
     0: "Clear sky",
     1: "Mainly clear",
@@ -42,7 +44,7 @@ def get_live_weather(location: str) -> dict[str, Any]:
     # 1. Geocode location to lat/lon
     try:
         geo_res = requests.get(
-            f"https://geocoding-api.open-meteo.com/v1/search?name={quote_plus(trimmed)}&count=1&language=en&format=json",
+            f"{OPEN_METEO_GEOCODING_URL}?name={quote_plus(trimmed)}&count=1&language=en&format=json",
             timeout=6,
         )
         if geo_res.status_code != 200 or not geo_res.json().get("results"):
@@ -55,7 +57,7 @@ def get_live_weather(location: str) -> dict[str, Any]:
 
         # 2. Fetch current weather and daily forecast
         weather_res = requests.get(
-            f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto",
+            f"{OPEN_METEO_FORECAST_URL}?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto",
             timeout=6,
         )
         if weather_res.status_code != 200:

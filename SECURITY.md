@@ -30,6 +30,13 @@ Untrusted user code or AI-generated scripts are executed in an isolated runtime 
 - **Output Buffering**: Stdout and stderr streams are capped at 50,000 characters to prevent memory buffer overflows.
 - **AST Sanitization**: Mathematical evaluations via the calculator tool use Python AST parsing rather than `eval()`, preventing code injection.
 
+> ⚠️ **Known Sandbox Limitation (P2 — Security):**
+> The current sandbox uses `subprocess.run` with a temporary directory. This is **process-level isolation only** — it is **not** a full container or VM-level sandbox. Malicious code could potentially access the host filesystem, network, or environment variables (except PATH, which is the only env var passed). This design is appropriate for a **personal assistant on a trusted personal computer**.
+>
+> **To run JARVIS in an environment with untrusted code execution, deploy inside Docker** (which adds OS-level isolation) and consider further restricting the container with seccomp/AppArmor profiles.
+>
+> Code execution is disabled in Docker by default (`JARVIS_LOCAL_ACTIONS_ENABLED=false` in docker-compose).
+
 ---
 
 ## 3. Filesystem Security & Path Traversal Defense

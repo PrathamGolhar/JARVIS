@@ -63,17 +63,31 @@ def normalize_content_type(raw_type: str | None, filename: str | None) -> str:
 @router.get("/speech/health")
 async def speech_health():
     """
-    Check availability of TTS and STT providers.
+    Check availability of TTS and STT providers and available voices.
     """
     voices_list = available_voices()
     from app.settings import settings
 
     stt_configured = bool(settings.groq_api_key and settings.groq_api_key.strip())
+    formatted_voices = []
+    for v in voices_list:
+        if hasattr(v, "model_dump"):
+            formatted_voices.append(v.model_dump())
+        elif hasattr(v, "dict"):
+            formatted_voices.append(v.dict())
+        elif isinstance(v, dict):
+            formatted_voices.append(v)
+        else:
+            formatted_voices.append({"id": getattr(v, "id", str(v)), "label": getattr(v, "label", str(v))})
+
     return {
         "status": "ready" if stt_configured else "degraded",
-        "sttProvider": "groq-whisper" if stt_configured else "none",
+        "sttProvider": settings.stt_provider if stt_configured else "none",
+        "sttConfigured": stt_configured,
         "sttAvailable": stt_configured,
+        "ttsProvider": settings.tts_provider,
         "ttsAvailable": len(voices_list) > 0,
+        "availableVoices": formatted_voices,
         "supportedFormats": list(ALLOWED_AUDIO_TYPES),
     }
 

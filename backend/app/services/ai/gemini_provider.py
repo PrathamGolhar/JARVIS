@@ -4,6 +4,7 @@ import secrets
 from typing import Any
 import requests
 
+from app.endpoints import GEMINI_API_BASE_URL
 from app.services.ai.base import AIChatResponse, AIProvider, ToolCall
 from app.settings import settings
 
@@ -12,6 +13,7 @@ logger = logging.getLogger("jarvis.gemini")
 
 class GeminiProvider(AIProvider):
     name = "gemini"
+    BASE_URL = GEMINI_API_BASE_URL
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         self.api_key = api_key or settings.google_api_key
@@ -96,7 +98,7 @@ class GeminiProvider(AIProvider):
             if function_declarations:
                 gemini_tools = [{"function_declarations": function_declarations}]
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"{self.BASE_URL}/models/{self.model}:generateContent?key={self.api_key}"
         payload: dict[str, Any] = {
             "contents": contents,
             "generationConfig": {

@@ -94,10 +94,17 @@ class ModelRouter:
     ) -> RouteDecision:
         if user_override and user_override.lower() != "auto":
             prov_name = user_override.lower()
+            model_map = {
+                "gemini": settings.gemini_model,
+                "groq": settings.groq_chat_model,
+                "openai": settings.openai_model,
+                "anthropic": settings.anthropic_model,
+                "local": "local-rule-engine",
+            }
             return RouteDecision(
                 category=TaskCategory.DEEP_REASONING,
                 provider_name=prov_name,
-                recommended_model=settings.gemini_model if prov_name == "gemini" else "default",
+                recommended_model=model_map.get(prov_name, "default"),
                 reason="User explicitly selected model provider override",
                 estimated_latency_tier="standard",
             )

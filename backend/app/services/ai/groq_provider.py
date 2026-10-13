@@ -3,6 +3,7 @@ import logging
 from typing import Any
 import requests
 
+from app.endpoints import GROQ_CHAT_URL
 from app.services.ai.base import AIChatResponse, AIProvider, ToolCall
 from app.settings import settings
 
@@ -11,7 +12,7 @@ logger = logging.getLogger("jarvis.groq")
 
 class GroqProvider(AIProvider):
     name = "groq"
-    URL = "https://api.groq.com/openai/v1/chat/completions"
+    URL = GROQ_CHAT_URL
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         self.api_key = api_key or settings.groq_api_key

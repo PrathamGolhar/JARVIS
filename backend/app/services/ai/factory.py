@@ -10,15 +10,15 @@ from app.settings import settings
 logger = logging.getLogger("jarvis.ai_factory")
 
 
-def get_ai_provider(preferred: str | None = None) -> AIProvider:
+def get_ai_provider(preferred: str | None = None, fallback_on_unconfigured: bool = False) -> AIProvider:
     """
     Resolve the active AI provider.
 
     In auto mode, select the best configured provider:
     Gemini -> Groq -> OpenAI -> Anthropic -> Local fallback.
 
-    For an explicitly requested provider, fail loudly if it is not configured so callers
-    can surface the real problem instead of silently falling back to another provider.
+    For an explicitly requested provider, fail loudly if it is not configured (unless fallback_on_unconfigured=True)
+    so callers can surface the real problem instead of silently falling back to another provider.
     """
     pref = (preferred or settings.ai_provider or "auto").lower()
 
@@ -36,7 +36,7 @@ def get_ai_provider(preferred: str | None = None) -> AIProvider:
         provider = provider_map[pref]()
         if provider.is_available():
             return provider
-        if preferred is not None or settings.ai_provider.lower() == pref:
+        if not fallback_on_unconfigured and (preferred is not None or settings.ai_provider.lower() == pref):
             raise RuntimeError(f"Selected AI provider '{pref}' is not configured.")
 
     if pref not in {"auto", "", *provider_map.keys()}:
@@ -51,6 +51,11 @@ def get_ai_provider(preferred: str | None = None) -> AIProvider:
     return LocalProvider()
 
 
+def get_active_provider_safe() -> AIProvider:
+    """Get active provider with guaranteed safe fallback to LocalProvider if unconfigured."""
+    return get_ai_provider(fallback_on_unconfigured=True)
+
+
 def list_configured_providers() -> list[str]:
     providers = []
     if GeminiProvider().is_available():
@@ -63,4 +68,3 @@ def list_configured_providers() -> list[str]:
         providers.append("anthropic")
     providers.append("local")
     return providers
-

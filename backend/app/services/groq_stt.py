@@ -1,9 +1,8 @@
 import io
 import requests
 
+from app.endpoints import GROQ_TRANSCRIBE_URL
 from app.settings import settings
-
-GROQ_TRANSCRIBE_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 WHISPER_MODELS = ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en"]
 
 

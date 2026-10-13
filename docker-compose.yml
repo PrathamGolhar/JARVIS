@@ -26,6 +26,13 @@ services:
       - JARVIS_PERMISSION_MODE=${JARVIS_PERMISSION_MODE:-assisted}
       - JARVIS_SANDBOX_TIMEOUT=${JARVIS_SANDBOX_TIMEOUT:-15}
       - JARVIS_LOCAL_ACTIONS_ENABLED=false
+      - JARVIS_ALLOWED_ORIGINS=http://localhost:1420,http://localhost:5173,http://localhost:3000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     volumes:
       - jarvis-data:/app/data
 
@@ -35,7 +42,7 @@ services:
     restart: unless-stopped
     working_dir: /app
     ports:
-      - "5173:5173"
+      - "1420:1420"
     volumes:
       - ./jarvis-frontend:/app
       - /app/node_modules

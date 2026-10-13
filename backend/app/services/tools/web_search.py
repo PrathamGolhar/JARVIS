@@ -5,6 +5,7 @@ from urllib.parse import unquote, urlparse
 from bs4 import BeautifulSoup
 import requests
 
+from app.endpoints import DUCKDUCKGO_API_URL, DUCKDUCKGO_HTML_URL
 from app.settings import settings
 
 HEADERS = {
@@ -41,7 +42,7 @@ def live_web_search(query: str, max_results: int = 5) -> dict[str, Any]:
     # 1. Query DuckDuckGo HTML search
     try:
         response = requests.post(
-            "https://html.duckduckgo.com/html/",
+            DUCKDUCKGO_HTML_URL,
             data={"q": trimmed, "b": ""},
             headers=HEADERS,
             timeout=8,
@@ -78,7 +79,7 @@ def live_web_search(query: str, max_results: int = 5) -> dict[str, Any]:
     if not results:
         try:
             ia_res = requests.get(
-                "https://api.duckduckgo.com/",
+                DUCKDUCKGO_API_URL,
                 params={"q": trimmed, "format": "json", "no_html": "1", "skip_disambig": "1"},
                 headers=HEADERS,
                 timeout=6,
