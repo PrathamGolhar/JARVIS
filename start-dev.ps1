@@ -39,6 +39,14 @@ Write-Host "[2/2] Starting React + Vite Frontend on http://localhost:1420 ..." -
 $frontendCmd = "Set-Location '$frontendDir'; npm run dev"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $frontendCmd
 
+# Wait for Vite dev server to initialize, then launch the HUD in browser
+Start-Sleep -Seconds 2
+try {
+    Start-Process "http://localhost:1420"
+} catch {
+    # Non-blocking if running headless
+}
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "   JARVIS is now online and operational!   " -ForegroundColor Cyan
