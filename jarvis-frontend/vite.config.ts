@@ -1,5 +1,11 @@
+import process from "node:process";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+
+// In local development, the backend normally runs on the same machine.
+// In Docker Compose, override this with the backend service DNS name.
+const apiProxyTarget =
+  process.env.JARVIS_API_PROXY_TARGET || "http://127.0.0.1:8765";
 
 export default defineConfig({
   plugins: [react()],
@@ -9,7 +15,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8765",
+        target: apiProxyTarget,
         changeOrigin: true,
       },
     },
