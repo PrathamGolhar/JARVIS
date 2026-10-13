@@ -51,6 +51,9 @@ def make_local_action_plan(text: str) -> dict[str, str | bool] | None:
 
 
 def execute_local_action(app_id: LocalAppId) -> LocalApp:
+    if getattr(settings, "permission_mode", "assisted") == "read_only":
+        raise RuntimeError("Local actions are disabled in 'read_only' permission mode.")
+
     if not local_action_bridge_available():
         raise RuntimeError("Local actions are disabled or the bridge is not running locally.")
 

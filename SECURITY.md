@@ -6,28 +6,32 @@ Security is a foundational pillar of JARVIS. Because JARVIS is designed as an au
 
 ## 1. Safety Tiers & Action Confirmation
 
-JARVIS implements three explicit permission tiers configured via `JARVIS_SAFETY_TIER`:
+JARVIS implements three explicit permission tiers configured via the canonical environment variable `JARVIS_PERMISSION_MODE` (with `JARVIS_SAFETY_TIER` supported as a backward-compatible alias):
 
-| Tier | Characteristics | Permitted Actions |
-| :--- | :--- | :--- |
-| **`READ ONLY`** | Completely passive. No filesystem changes or external command execution. | Chat, reading files, document analysis, calculations, memory inspection. |
-| **`ASSISTED`** *(Default)* | Interactive confirmation required for destructive or high-impact actions. | Triggers confirmation modal with detailed parameter payload before executing writes, app launches, or modifications. |
-| **`FULL CONTROL`** | Autonomous tool execution enabled for authorized administrative environments. | Direct tool chaining with audit logging. |
+| Mode / Tier | Setting Value | Characteristics | Permitted Actions |
+| :--- | :--- | :--- | :--- |
+| **`READ ONLY`** | `read_only` | Completely passive. No filesystem modifications, code execution, or app launches. | Chat, reading authorized workspace files, document extraction, calculator, memory inspection. |
+| **`ASSISTED`** *(Default)* | `assisted` | Interactive confirmation required for destructive or high-impact actions. | Triggers HUD confirmation modal with detailed parameter payload before executing writes, app launches, or external actions. |
+| **`FULL CONTROL`** | `full_control` | Autonomous tool execution enabled for authorized personal engineering environments. | Direct tool chaining with audit logging and verification loops. |
 
-### High-Impact Tool Classification
-Tools requiring explicit confirmation in `ASSISTED` mode:
-- `open_application` / OS command triggers
-- `write_file` / File modifications outside temporary scratchpad
-- High-impact web scraping or external webhook calls
+### Security Boundaries & Tool Enforcement
+- **Read-Only Mode Enforcement**: In `read_only` mode, `write_workspace_file`, `execute_sandboxed_code`, and `execute_local_action` are immediately rejected with security exception responses.
+- **Environment Protection**: `write_workspace_file` strictly blocks writing or overwriting `.env` configuration files to prevent credential hijacking or settings tampering.
+- **High-Impact Tools**: Tools requiring explicit confirmation in `assisted` mode:
+  - `open_application` / OS desktop triggers
+  - `write_file` / File modifications outside temporary scratchpads
+  - High-impact web actions and system operations
 
 ---
 
 ## 2. Execution Sandbox & Isolation
 
 Untrusted user code or AI-generated scripts are executed in an isolated runtime environment (`app/services/coding/sandbox.py`):
-- **Process Isolation**: Code runs in a spawned sub-process with bounded permissions.
-- **Resource Constraints**: Strict timeout limits (`JARVIS_SANDBOX_TIMEOUT`, default 15s) prevent infinite loops or CPU exhaustion.
-- **Output Buffering**: Stdout and stderr streams are capped at 50,000 characters to prevent memory buffer overflows.
+- **Python Isolated Mode (`-I`)**: Python scripts run with `-I`, which isolates Python from `PYTHONPATH`, user site-packages, and external python environment modifications.
+- **Environment Sanitization**: Host secrets, API keys, and database URLs are scrubbed—the child subprocess receives only `PYTHONIOENCODING=utf-8` and `PATH`.
+- **Ephemeral Filesystem**: Code executes inside a temporary directory (`tempfile.TemporaryDirectory()`) that is wiped upon execution finish.
+- **Resource Constraints**: Strict timeout limits (`JARVIS_SANDBOX_TIMEOUT`, default 15s) terminate runaway processes.
+- **Output Buffering**: Stdout and stderr streams are capped at 50,000 characters to prevent buffer exhaustion.
 - **AST Sanitization**: Mathematical evaluations via the calculator tool use Python AST parsing rather than `eval()`, preventing code injection.
 
 > ⚠️ **Known Sandbox Limitation (P2 — Security):**

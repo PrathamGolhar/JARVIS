@@ -37,7 +37,7 @@ pip install -r requirements.txt
 
 ### 2.2 Frontend Setup
 ```bash
-cd ../../../jarvis-frontend
+cd ../jarvis-frontend
 npm install
 ```
 
@@ -82,7 +82,7 @@ cd jarvis-frontend
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser.
+Open `http://localhost:1420` in your browser.
 
 ---
 

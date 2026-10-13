@@ -1,0 +1,43 @@
+# Version control
+.git
+.gitignore
+
+# Environment & credentials (CRITICAL SECURITY)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python artifacts & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
+
+# Node & Frontend artifacts
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+jarvis-frontend/dist/
+dist/
+
+# Local databases, uploads & logs
+data/
+*.db
+*.sqlite3
+uploads/
+generated_files/
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
+test_artifact.txt

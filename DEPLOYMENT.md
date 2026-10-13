@@ -115,5 +115,5 @@ server {
 ---
 
 ## 5. Backup & Persistence
-- **Database**: The SQLite database is located at `./data/jarvis.db` (or `/app/data/jarvis.db` in Docker). Backup regularly.
+- **Database**: The SQLite database is located at `./data/jarvis_memory.db` (or `/app/data/jarvis_memory.db` in Docker). Backup regularly.
 - **Generated Artifacts & Uploads**: Located under `./data/workspace` and `./data/generated_files`.

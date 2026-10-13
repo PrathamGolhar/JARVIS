@@ -112,8 +112,22 @@ def read_workspace_file(file_path: str, max_chars: int = 6000) -> dict[str, Any]
 
 def write_workspace_file(file_path: str, content: str) -> dict[str, Any]:
     """Write or update a file within the authorized workspace."""
+    if getattr(settings, "permission_mode", "assisted") == "read_only":
+        return {
+            "ok": False,
+            "file_path": file_path,
+            "error": "File write is disabled in 'read_only' permission mode.",
+        }
+
     try:
         path = _resolve_safe_path(file_path)
+        if path.name.startswith(".env"):
+            return {
+                "ok": False,
+                "file_path": file_path,
+                "error": "Modifying environment configuration files (.env) is prohibited for security.",
+            }
+
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)

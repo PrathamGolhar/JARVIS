@@ -339,6 +339,16 @@ export class SpeechManager {
   public async startListening(options: SpeechListenOptions): Promise<void> {
     if (this.isListeningActive) return;
 
+    // Fail-fast if neither Web Speech API nor Backend Whisper STT is available
+    if (!this.recognition && this.activeProvider === "none") {
+      this.setStatus("STT_CONFIGURATION_ERROR", "Speech transcription service is unavailable.");
+      options.onError(
+        "Speech transcription service is unavailable: Web Speech API is not supported in this browser and backend Groq Whisper is not configured. Please use Chrome/Edge or configure GROQ_API_KEY in backend .env, Master.",
+        "STT_CONFIGURATION_ERROR"
+      );
+      return;
+    }
+
     this.options = options;
     this.currentMode = options.mode || "push-to-talk";
     this.currentLang = options.lang || "en-US";
@@ -596,9 +606,9 @@ export class SpeechManager {
     let code: STTStatus = "STT_SERVER_ERROR";
     let userMsg = "I encountered difficulty with the speech transcription service. Reconnecting now, Master.";
 
-    if (errMsg.includes("STT_AUTH_ERROR")) {
+    if (errMsg.includes("STT_AUTH_ERROR") || errMsg.includes("Groq API key is not configured")) {
       code = "STT_AUTH_ERROR";
-      userMsg = "Speech service authentication failed. Please verify your Groq API key in the configuration, Master.";
+      userMsg = "Speech transcription service is unavailable: Groq API key is not configured in backend .env. Please configure GROQ_API_KEY for Whisper transcription, or use a browser with built-in Speech Recognition (Chrome/Edge), Master.";
     } else if (errMsg.includes("STT_RATE_LIMITED")) {
       code = "STT_RATE_LIMITED";
       userMsg = "Speech service is temporarily rate-limited. Retrying automatically in a moment, Master.";
@@ -608,6 +618,9 @@ export class SpeechManager {
     } else if (errMsg.includes("STT_NETWORK_ERROR") || !navigator.onLine) {
       code = "STT_NETWORK_ERROR";
       userMsg = "Network connection is offline. Speech recognition will resume once online, Master.";
+    } else if (errMsg.includes("503") || errMsg.includes("unavailable")) {
+      code = "STT_SERVER_ERROR";
+      userMsg = "Speech transcription service is temporarily unavailable. Please check backend connectivity or use text chat, Master.";
     }
 
     this.setStatus(code, errMsg);

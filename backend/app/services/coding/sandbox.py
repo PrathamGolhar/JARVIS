@@ -24,13 +24,24 @@ def execute_sandboxed_code(
     timeout = timeout_seconds or settings.sandbox_timeout_seconds
     lang = language.lower().strip()
 
+    if getattr(settings, "permission_mode", "assisted") == "read_only":
+        return CodeExecutionResponse(
+            ok=False,
+            stdout="",
+            stderr="Code execution is disabled in 'read_only' permission mode.",
+            exitCode=1,
+            executionTimeMs=0.0,
+            memoryMb=0.0,
+        )
+
     with tempfile.TemporaryDirectory() as temp_dir:
         dir_path = Path(temp_dir)
 
         if lang == "python":
             script_file = dir_path / "script.py"
             script_file.write_text(code, encoding="utf-8")
-            cmd = [sys.executable, "-u", str(script_file)]
+            # -I: isolated mode (ignores PYTHONPATH and user site-packages, disables environment inheritance)
+            cmd = [sys.executable, "-I", "-u", str(script_file)]
         elif lang in ("javascript", "typescript", "js", "ts"):
             script_file = dir_path / "script.js"
             script_file.write_text(code, encoding="utf-8")

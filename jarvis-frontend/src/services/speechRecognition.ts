@@ -274,9 +274,11 @@ export class NaturalSpeechEngine {
           this.callbacks?.onError("No speech was detected. Please speak clearly.");
         }
       } catch (err) {
-        this.callbacks?.onError(
-          err instanceof Error ? err.message : "Speech transcription failed."
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        const friendlyMsg = msg.includes("STT_AUTH_ERROR") || msg.includes("Groq API key is not configured")
+          ? "Speech transcription service is unavailable: Groq API key is not configured in backend .env. Please configure GROQ_API_KEY for Whisper transcription, or use a browser with built-in Speech Recognition (Chrome/Edge)."
+          : msg || "Speech transcription failed.";
+        this.callbacks?.onError(friendlyMsg);
       }
     } else {
       this.callbacks?.onError("No audio recorded.");
