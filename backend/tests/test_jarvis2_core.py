@@ -8,11 +8,16 @@ from app.services.events.bus import EventBus, EventType
 from app.services.tools.math_engine import MathEngine
 from app.services.file_processing.multi_doc import MultiDocumentReasoner
 from app.services.plugins.base import JARVISPlugin, PermissionScope, PluginRegistry, PluginToolDefinition
+from app.settings import settings
 
 client = TestClient(app)
 
 
-def test_task_classifier_and_model_router() -> None:
+def test_task_classifier_and_model_router(monkeypatch) -> None:
+    # The classifier's intent classification must be independent of the CI
+    # provider override; exercise intent routing in automatic mode explicitly.
+    monkeypatch.setattr(settings, "ai_provider", "auto")
+
     # 1. Classify simple query
     cat_simple = TaskClassifier.classify("What is the time?")
     assert cat_simple == TaskCategory.SIMPLE_CONVERSATION
