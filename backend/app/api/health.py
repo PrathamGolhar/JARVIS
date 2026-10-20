@@ -4,6 +4,7 @@ import shutil
 from fastapi import APIRouter, Response, status
 
 from app.services.ai.factory import list_configured_providers
+from app.services.ai.health import provider_health_registry
 from app.services.diagnostics_service import test_database_connectivity, test_storage_health
 from app.services.memory.persistent_memory import PersistentMemoryStore
 from app.settings import settings
@@ -66,8 +67,9 @@ async def health_readiness(response: Response) -> dict[str, Any]:
 
 
 @router.get("/health/ai")
-async def health_ai() -> dict[str, Any]:
+async def health_ai() -> dict:
     providers = list_configured_providers()
+    health_summary = provider_health_registry.summary()
     return {
         "status": "healthy" if len(providers) > 0 else "degraded",
         "configuredProviders": providers,
@@ -76,6 +78,7 @@ async def health_ai() -> dict[str, Any]:
         "groqConfigured": bool(settings.groq_api_key),
         "openaiConfigured": bool(settings.openai_api_key),
         "anthropicConfigured": bool(settings.anthropic_api_key),
+        "providerHealth": health_summary,
     }
 
 

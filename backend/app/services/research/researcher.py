@@ -2,19 +2,17 @@ import ipaddress
 import json
 import logging
 import socket
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
-try:
-    from ddgs import DDGS
-except ImportError:
-    from duckduckgo_search import DDGS
 
 from app.schemas import Citation, ResearchResponse
 from app.services.ai.factory import get_ai_provider
 from app.services.document_generation.pdf_generator import generate_pdf_document
+from app.services.tools.web_search import live_web_search, _clean_search_query
 
 logger = logging.getLogger("jarvis.researcher")
 
@@ -66,6 +64,44 @@ def extract_webpage_text(url: str, max_chars: int = 3000) -> str:
     return ""
 
 
+def _build_subqueries(query: str, depth: str) -> list[str]:
+    """
+    Decompose a research query into multiple sub-queries for broader coverage.
+    For deep/comprehensive modes, creates 3-5 angle-based sub-queries.
+    """
+    cleaned = _clean_search_query(query)
+    if depth == "quick":
+        return [cleaned]
+
+    now = datetime.now(tz=timezone.utc)
+    date_str = now.strftime("%Y %B")
+    prev_month = (now - timedelta(days=30)).strftime("%Y %B")
+
+    # Generate sub-queries to cover multiple angles
+    subqueries = [
+        cleaned,                                         # Primary
+        f"{cleaned} latest news {date_str}",            # Recency angle
+        f"{cleaned} analysis overview",                  # Analysis angle
+    ]
+    if depth == "comprehensive":
+        subqueries += [
+            f"{cleaned} {prev_month}",                  # Last-month angle
+            f"{cleaned} expert opinion research",        # Expert angle
+        ]
+    return subqueries
+
+
+def _deduplicate_results(results: list[dict]) -> list[dict]:
+    """Remove duplicate results by URL (normalized)."""
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for r in results:
+        url = r.get("url", "").strip().rstrip("/")
+        if url and url not in seen:
+            seen.add(url)
+            unique.append(r)
+    return unique
+
 
 def perform_deep_research(
     query: str,
@@ -73,38 +109,54 @@ def perform_deep_research(
     generate_doc: Literal["none", "pdf", "docx", "pptx"] = "none",
 ) -> ResearchResponse:
     """
-    Perform multi-source web research with real live search, page extraction, and grounded AI synthesis.
+    Perform multi-source web research using the centralized live_web_search() abstraction.
+
+    Pipeline:
+    1. Query decomposition (multiple angle sub-queries)
+    2. Multi-source search (DDGS, Google News RSS, Wikipedia, DDG Instant Answer)
+    3. Source ranking and deduplication
+    4. Webpage extraction (SSRF-protected)
+    5. AI synthesis with citation mapping
     """
-    max_results = 4 if depth == "quick" else (7 if depth == "deep" else 10)
-    search_results = []
+    max_per_query = 4 if depth == "quick" else (6 if depth == "deep" else 8)
+    subqueries = _build_subqueries(query, depth)
+    all_raw_results: list[dict] = []
     citations: list[Citation] = []
 
-    try:
-        with DDGS() as ddgs:
-            raw_results = list(ddgs.text(query, max_results=max_results))
-            for item in raw_results:
-                link = item.get("href") or item.get("link") or ""
-                title = item.get("title") or "Source"
-                snippet = item.get("body") or item.get("snippet") or ""
-                if link:
-                    domain = urlparse(link).netloc
-                    citations.append(Citation(title=title, url=link, domain=domain, snippet=snippet))
-                    search_results.append({
-                        "title": title,
-                        "url": link,
-                        "snippet": snippet,
-                    })
-    except Exception as exc:
-        logger.warning("DuckDuckGo search error: %s", exc)
+    # Step 1 & 2: Multi-query, multi-source search
+    for subq in subqueries:
+        result = live_web_search(subq, max_results=max_per_query)
+        if result.get("ok") and result.get("results"):
+            all_raw_results.extend(result["results"])
 
-    # Scrape top 2 source URLs for deep context
+    if not all_raw_results:
+        # Last-resort: try original unmodified query
+        fallback = live_web_search(query, max_results=max_per_query)
+        if fallback.get("ok"):
+            all_raw_results.extend(fallback.get("results", []))
+
+    # Step 3: Deduplicate
+    deduped_results = _deduplicate_results(all_raw_results)
+    search_results = deduped_results[:max_per_query * 2]  # Cap total results
+
+    # Build citations from search results
+    for item in search_results:
+        link = item.get("url", "")
+        title = item.get("title", "Source")
+        snippet = item.get("snippet", "")
+        if link:
+            domain = urlparse(link).netloc
+            citations.append(Citation(title=title, url=link, domain=domain, snippet=snippet))
+
+    # Step 4: Webpage extraction — extract top 3 sources for deep context
     deep_context = ""
-    for c in citations[:2]:
+    extract_count = 1 if depth == "quick" else (2 if depth == "deep" else 3)
+    for c in citations[:extract_count]:
         page_text = extract_webpage_text(c.url, max_chars=2000)
         if page_text:
             deep_context += f"\n\nSource: {c.title} ({c.url})\n{page_text}"
 
-    # Synthesize with AI
+    # Step 5: AI synthesis
     provider = get_ai_provider()
     system_prompt = (
         "You are JARVIS Deep Research Intelligence.\n"
@@ -121,8 +173,9 @@ def perform_deep_research(
 
     user_prompt = (
         f"Research Query: {query}\n\n"
-        f"Search Results Snippets:\n{json.dumps(search_results, indent=2)}\n\n"
-        f"Scraped In-Depth Content:\n{deep_context}"
+        f"Depth: {depth}\n"
+        f"Search Results Snippets:\n{json.dumps(search_results[:10], indent=2)}\n\n"
+        f"Scraped In-Depth Content:\n{deep_context or 'No additional webpage content available.'}"
     )
 
     try:

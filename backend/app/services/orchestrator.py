@@ -8,7 +8,7 @@ from uuid import UUID
 from app.schemas import AssistantMode, Citation, PendingAction, PlanStep, ToolEvent
 from app.services.agents.planner import planning_engine
 from app.services.agents.verifier import output_verifier
-from app.services.ai.factory import get_ai_provider
+from app.services.ai.factory import execute_with_failover, get_ai_provider
 from app.services.memory import memory_store
 from app.services.memory.vector_store import rag_store
 from app.services.projects.manager import project_manager
@@ -177,23 +177,17 @@ def run_orchestration(
     generated_files: list[dict[str, Any]] = []
     pending_action: dict[str, Any] | None = None
 
-    provider = get_ai_provider()
-
     for _ in range(settings.max_tool_iterations):
         try:
-            ai_res = provider.chat(
+            ai_res, active_provider = execute_with_failover(
                 messages=messages,
                 tools=TOOLS_SCHEMA,
                 temperature=0.3,
                 max_tokens=800,
             )
         except Exception as exc:
-            logger.warning(
-                "AI provider error after all retries: %s (%s). Falling back to local rule engine.",
-                type(exc).__name__, exc,
-            )
-            from app.services.ai.local_provider import LocalProvider
-            ai_res = LocalProvider().chat(messages=messages, tools=TOOLS_SCHEMA)
+            logger.error("Unexpected orchestration error: %s", exc, exc_info=True)
+            raise OrchestratorError(f"AI orchestration failed: {exc}", status_code=500) from exc
 
         tool_calls = ai_res.tool_calls
 
