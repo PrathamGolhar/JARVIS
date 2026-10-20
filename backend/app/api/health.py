@@ -22,15 +22,34 @@ async def health_liveness() -> dict[str, Any]:
 @router.get("/ready")
 @router.get("/ready/")
 @router.get("/api/ready")
+@router.get("/readiness")
+@router.get("/readiness/")
+@router.get("/api/readiness")
 async def health_readiness(response: Response) -> dict[str, Any]:
     """
-    Truthful dependency readiness probe. Checks database, storage, and AI engine status.
-    Returns HTTP 200 if dependencies are ready, or 503 if a critical dependency is broken.
+    Truthful dependency readiness probe. Checks Backend, Database, AI, Memory,
+    Web Search, TTS, STT, and Tools status.
+    Returns HTTP 200 if critical dependencies are ready, or 503 if broken.
     """
+    from app.services.diagnostics_service import get_deep_diagnostics
+    diag = get_deep_diagnostics()
+    items_by_id = {item.id: item for item in diag.items}
+
+    subsystems = {
+        "backend": items_by_id.get("backend").status.upper() if items_by_id.get("backend") else "READY",
+        "database": items_by_id.get("database").status.upper() if items_by_id.get("database") else "READY",
+        "ai": items_by_id.get("ai_engine").status.upper() if items_by_id.get("ai_engine") else "READY",
+        "memory": items_by_id.get("memory").status.upper() if items_by_id.get("memory") else "READY",
+        "webSearch": items_by_id.get("network").status.upper() if items_by_id.get("network") else "READY",
+        "tts": items_by_id.get("tts").status.upper() if items_by_id.get("tts") else "READY",
+        "stt": items_by_id.get("stt").status.upper() if items_by_id.get("stt") else "UNAVAILABLE",
+        "tools": items_by_id.get("tools").status.upper() if items_by_id.get("tools") else "READY",
+    }
+
     db_ok, db_lat, db_msg = test_database_connectivity()
     st_ok, st_lat, st_msg = test_storage_health()
     providers = list_configured_providers()
-    ai_ok = len(providers) > 0  # Local engine is always available
+    ai_ok = len(providers) > 0
 
     is_ready = db_ok and st_ok and ai_ok
     if not is_ready:
@@ -38,9 +57,11 @@ async def health_readiness(response: Response) -> dict[str, Any]:
 
     return {
         "status": "ready" if is_ready else "degraded",
+        "subsystems": subsystems,
         "database": {"ready": db_ok, "latencyMs": db_lat, "message": db_msg},
         "storage": {"ready": st_ok, "latencyMs": st_lat, "message": st_msg},
         "ai": {"ready": ai_ok, "availableProviders": providers, "primary": settings.ai_provider},
+        "details": {item.id: {"status": item.status, "label": item.label, "details": item.details} for item in diag.items},
     }
 
 
