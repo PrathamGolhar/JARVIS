@@ -67,6 +67,7 @@ async def health_readiness(response: Response) -> dict[str, Any]:
 
 
 @router.get("/health/ai")
+@router.get("/api/health/ai")
 async def health_ai() -> dict:
     providers = list_configured_providers()
     health_summary = provider_health_registry.summary()
