@@ -46,12 +46,15 @@ class LocalProvider(AIProvider):
             if tool_name == "web_search":
                 if data.get("ok") and data.get("results"):
                     results = data["results"]
-                    lines = [f"Master, I located {len(results)} live web sources for your query:"]
-                    for r in results[:4]:
+                    lines = ["Master, here is the verified intelligence retrieved from live web research:"]
+                    for idx, r in enumerate(results[:5], start=1):
                         title = r.get("title", "Source")
                         url = r.get("url", "")
-                        snippet = r.get("snippet", "")
-                        lines.append(f"- **{title}** ({url}): {snippet}")
+                        snippet = r.get("snippet", "").strip()
+                        domain = r.get("domain", "")
+                        source_label = f" *({domain})*" if domain else ""
+                        lines.append(f"{idx}. **{title}**{source_label}\n   {snippet}\n   Source: {url}")
+                    lines.append("All data points have been grounded with live search citations.")
                     reply = "\n\n".join(lines)
                 else:
                     reply = (

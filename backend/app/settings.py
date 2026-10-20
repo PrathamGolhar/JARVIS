@@ -54,10 +54,10 @@ class Settings:
         default_factory=lambda: _get_first_env("JARVIS_GROQ_API_KEY", "GROQ_API_KEY", default="")
     )
     groq_chat_model: str = field(
-        default_factory=lambda: _get_first_env("JARVIS_GROQ_MODEL", "GROQ_CHAT_MODEL", "GROQ_MODEL", default="openai/gpt-oss-120b")
+        default_factory=lambda: _get_first_env("JARVIS_GROQ_MODEL", "GROQ_CHAT_MODEL", "GROQ_MODEL", default="openai/gpt-oss-20b")
     )
     groq_fallback_model: str = field(
-        default_factory=lambda: _get_first_env("JARVIS_GROQ_FALLBACK_MODEL", "GROQ_FALLBACK_MODEL", default="openai/gpt-oss-20b")
+        default_factory=lambda: _get_first_env("JARVIS_GROQ_FALLBACK_MODEL", "GROQ_FALLBACK_MODEL", default="openai/gpt-oss-120b")
     )
     openai_api_key: str = field(
         default_factory=lambda: _get_first_env("JARVIS_OPENAI_API_KEY", "OPENAI_API_KEY", default="")

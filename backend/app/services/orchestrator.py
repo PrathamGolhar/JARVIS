@@ -185,10 +185,13 @@ def run_orchestration(
                 messages=messages,
                 tools=TOOLS_SCHEMA,
                 temperature=0.3,
-                max_tokens=1024,
+                max_tokens=800,
             )
         except Exception as exc:
-            logger.warning("AI provider error: %s. Falling back to local rule engine.", exc)
+            logger.warning(
+                "AI provider error after all retries: %s (%s). Falling back to local rule engine.",
+                type(exc).__name__, exc,
+            )
             from app.services.ai.local_provider import LocalProvider
             ai_res = LocalProvider().chat(messages=messages, tools=TOOLS_SCHEMA)
 

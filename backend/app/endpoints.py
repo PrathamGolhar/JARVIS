@@ -27,6 +27,10 @@ ANTHROPIC_MESSAGES_URL: str = "https://api.anthropic.com/v1/messages"
 DUCKDUCKGO_HTML_URL: str = "https://html.duckduckgo.com/html/"
 DUCKDUCKGO_API_URL: str = "https://api.duckduckgo.com/"
 
+# Live Search & Knowledge Endpoints
+GOOGLE_NEWS_RSS_URL: str = "https://news.google.com/rss/search"
+WIKIPEDIA_API_URL: str = "https://en.wikipedia.org/w/api.php"
+
 # Open-Meteo Weather
 OPEN_METEO_GEOCODING_URL: str = "https://geocoding-api.open-meteo.com/v1/search"
 OPEN_METEO_FORECAST_URL: str = "https://api.open-meteo.com/v1/forecast"
