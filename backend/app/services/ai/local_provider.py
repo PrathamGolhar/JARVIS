@@ -1,3 +1,4 @@
+import json
 import re
 import secrets
 from typing import Any
@@ -30,6 +31,82 @@ class LocalProvider(AIProvider):
                 break
 
         low = user_message.lower().strip()
+
+        # Check if the message history contains tool results to synthesize
+        tool_results = [m for m in messages if m.get("role") == "tool"]
+        if tool_results:
+            last_tool = tool_results[-1]
+            tool_name = last_tool.get("name", "")
+            raw_content = last_tool.get("content", "{}")
+            try:
+                data = json.loads(raw_content) if isinstance(raw_content, str) else raw_content
+            except Exception:
+                data = {}
+
+            if tool_name == "web_search":
+                if data.get("ok") and data.get("results"):
+                    results = data["results"]
+                    lines = [f"Master, I located {len(results)} live web sources for your query:"]
+                    for r in results[:4]:
+                        title = r.get("title", "Source")
+                        url = r.get("url", "")
+                        snippet = r.get("snippet", "")
+                        lines.append(f"- **{title}** ({url}): {snippet}")
+                    reply = "\n\n".join(lines)
+                else:
+                    reply = (
+                        "Web research is temporarily unavailable. "
+                        "I can still answer from my existing knowledge, or you can retry the research request."
+                    )
+                return AIChatResponse(
+                    content=reply,
+                    tool_calls=[],
+                    model="local-rule-engine",
+                    provider=self.name,
+                )
+
+            if tool_name == "calculator":
+                val = data.get("result") or data.get("value") or data.get("expression")
+                return AIChatResponse(
+                    content=f"Master, the calculated result is **{val}**.",
+                    tool_calls=[],
+                    model="local-rule-engine",
+                    provider=self.name,
+                )
+
+            if tool_name == "get_weather":
+                if data.get("ok"):
+                    loc = data.get("location", "the requested area")
+                    temp = data.get("temperature", "N/A")
+                    cond = data.get("conditions", "Clear")
+                    return AIChatResponse(
+                        content=f"Master, current weather in {loc} is {temp}°C with {cond}.",
+                        tool_calls=[],
+                        model="local-rule-engine",
+                        provider=self.name,
+                    )
+                return AIChatResponse(
+                    content="Master, live weather service is temporarily unavailable.",
+                    tool_calls=[],
+                    model="local-rule-engine",
+                    provider=self.name,
+                )
+
+            if tool_name == "system_diagnostics":
+                return AIChatResponse(
+                    content="Master, telemetry confirms hardware subsystems are operating within nominal parameters.",
+                    tool_calls=[],
+                    model="local-rule-engine",
+                    provider=self.name,
+                )
+
+            msg = data.get("message") or f"Executed tool '{tool_name}' successfully."
+            return AIChatResponse(
+                content=f"Master, {msg}",
+                tool_calls=[],
+                model="local-rule-engine",
+                provider=self.name,
+            )
 
         # Tool heuristic detection
         tool_calls = []

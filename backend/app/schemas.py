@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 AssistantMode = Literal[
     "general",
@@ -255,12 +255,22 @@ class ResearchRequest(BaseModel):
 
 
 class ResearchResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     topic: str
     summary: str
     findings_markdown: str = Field(alias="findingsMarkdown")
     citations: list[Citation]
     key_takeaways: list[str] = Field(default_factory=list, alias="keyTakeaways")
     generated_file_url: str | None = Field(default=None, alias="generatedFileUrl")
+
+    @property
+    def findingsMarkdown(self) -> str:
+        return self.findings_markdown
+
+    @property
+    def keyTakeaways(self) -> list[str]:
+        return self.key_takeaways
 
 
 # Code Assistant & Sandbox

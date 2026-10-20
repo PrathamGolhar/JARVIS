@@ -272,10 +272,12 @@ export function App() {
   }
 
   async function playSpeech(text: string) {
+    stopSpeech();
+    // Clean markdown code blocks from speech output
+    const cleanSpokenText = text.replace(/```[\s\S]*?```/g, "Code block provided in terminal.").replace(/[#*`_]/g, "");
+
+    // 1. Primary: Edge TTS via backend
     try {
-      stopSpeech();
-      // Clean markdown code blocks from speech output
-      const cleanSpokenText = text.replace(/```[\s\S]*?```/g, "Code block provided in terminal.").replace(/[#*`_]/g, "");
       const url = URL.createObjectURL(await requestSpeech(cleanSpokenText, voiceId));
       const audio = new Audio(url);
       audio.crossOrigin = "anonymous";
@@ -301,11 +303,49 @@ export function App() {
       await audio.play();
       setStatus("speaking");
       speechManager.setVoiceState("SPEAKING");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Speech playback unavailable.");
-      setStatus("idle");
-      speechManager.setVoiceState("IDLE");
+      return;
+    } catch (ttsErr) {
+      console.warn("[JARVIS TTS] Edge TTS unavailable, falling back to browser SpeechSynthesis:", ttsErr);
     }
+
+    // 2. Secondary fallback: Browser native SpeechSynthesis
+    if (typeof window !== "undefined" && "speechSynthesis" in window && window.speechSynthesis) {
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(cleanSpokenText);
+        utterance.onend = () => {
+          setStatus("idle");
+          speechManager.setVoiceState("IDLE");
+          if (continuousMode) {
+            autoListenTimerRef.current = window.setTimeout(() => {
+              autoListenTimerRef.current = null;
+              void startListening();
+            }, 450);
+          }
+        };
+        utterance.onerror = (e) => {
+          console.warn("[JARVIS TTS] Browser SpeechSynthesis error:", e);
+          setStatus("idle");
+          speechManager.setVoiceState("IDLE");
+        };
+
+        window.speechSynthesis.speak(utterance);
+        setStatus("speaking");
+        speechManager.setVoiceState("SPEAKING");
+        return;
+      } catch (synthErr) {
+        console.warn("[JARVIS TTS] Browser SpeechSynthesis failed:", synthErr);
+      }
+    }
+
+    // 3. Graceful fallback state: text remains fully readable; do not crash or turn UI red
+    setStatus("idle");
+    speechManager.setVoiceState("IDLE");
+    showToast({
+      title: "Voice Output Degraded",
+      message: "Voice output unavailable; text response is still available.",
+      type: "info",
+    });
   }
 
   function extractCodeBlocks(text: string): { code: string; language: string }[] {
@@ -460,6 +500,10 @@ export function App() {
     void speechManager.stopListening();
   }
 
+  const aiDiag = diagnosticsItems.find((d) => d.id === "ai_engine");
+  const isAiFallback = aiDiag?.status === "warning" || aiDiag?.label.includes("FALLBACK");
+  const hasDegradedItems = diagnosticsItems.some((d) => d.status === "warning" || d.status === "error");
+
   const stateLabel = backendStarting
     ? "INITIALIZING JARVIS ORCHESTRATOR"
     : status === "listening"
@@ -472,6 +516,10 @@ export function App() {
     ? "EXECUTING SYSTEM WORKFLOW"
     : status === "speaking"
     ? "SYNTHESIZING NEURAL SPEECH"
+    : isAiFallback
+    ? "JARVIS ONLINE (LOCAL FALLBACK)"
+    : hasDegradedItems
+    ? "JARVIS ONLINE (DEGRADED)"
     : "JARVIS ONLINE & READY";
 
   const recentCommands = messages.filter((message) => message.author === "user").map((message) => message.text).slice(-4).reverse();
@@ -497,7 +545,7 @@ export function App() {
 
       {/* Top Futuristic Navigation Bar */}
       <TopNavigationBar
-        systemStatus={backendStarting ? "degraded" : error ? "degraded" : "online"}
+        systemStatus={backendStarting ? "degraded" : hasDegradedItems ? "degraded" : "online"}
         activeMode={activeMode}
         onChangeMode={(m) => {
           setActiveMode(m);
@@ -838,3 +886,5 @@ export function App() {
     </main>
   );
 }
+
+export default App;

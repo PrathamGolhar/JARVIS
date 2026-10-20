@@ -70,23 +70,33 @@ export type ChatResponse = {
   generatedFiles?: GeneratedFile[];
 };
 
-export async function sendChatMessage(payload: ChatPayload): Promise<ChatResponse> {
-  const res = await fetch(`${API_BASE_URL}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: payload.sessionId,
-      text: payload.text,
-      mode: payload.mode || "general",
-      projectId: payload.projectId,
-      confirmedActionId: payload.confirmedActionId,
-    }),
-  });
+import { parseApiError } from "./errors";
 
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({ detail: "Unknown server error" }));
-    throw new Error(errorBody.detail || `Server responded with ${res.status}`);
+export async function sendChatMessage(payload: ChatPayload): Promise<ChatResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: payload.sessionId,
+        text: payload.text,
+        mode: payload.mode || "general",
+        projectId: payload.projectId,
+        confirmedActionId: payload.confirmedActionId,
+      }),
+    });
+  } catch (err) {
+    throw await parseApiError(err, "/api/chat");
   }
 
-  return res.json();
+  if (!res.ok) {
+    throw await parseApiError(res, "/api/chat");
+  }
+
+  try {
+    return await res.json();
+  } catch (err) {
+    throw await parseApiError(err, "/api/chat");
+  }
 }

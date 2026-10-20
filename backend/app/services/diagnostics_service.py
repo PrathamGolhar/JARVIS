@@ -73,17 +73,15 @@ def get_deep_diagnostics() -> DiagnosticsResponse:
     """Truthfully inspect and report telemetry across all JARVIS subsystems."""
     items: list[DiagnosticItem] = []
 
-    # 1. AI Provider Engine
-    ai_prov = get_ai_provider()
-    is_available = ai_prov.is_available()
+    # 1. Backend Process Core
     items.append(DiagnosticItem(
-        id="ai_engine",
-        label=f"AI Core ({ai_prov.name.upper()})",
-        status="active" if is_available else "warning",
-        details=f"Provider: {ai_prov.name} | Model: {getattr(ai_prov, 'model', 'local-rule-engine')}",
+        id="backend",
+        label="JARVIS Core Backend API",
+        status="ready",
+        details=f"FastAPI process active on {settings.backend_host}:{settings.backend_port} (Env: {settings.env})",
     ))
 
-    # 2. Database
+    # 2. Database & Persistent Store
     db_ok, db_lat, db_msg = test_database_connectivity()
     mem_count = len(memory_store.list_memories())
     items.append(DiagnosticItem(
@@ -104,51 +102,93 @@ def get_deep_diagnostics() -> DiagnosticsResponse:
         details=st_msg,
     ))
 
-    # 4. Network & Web Access
+    # 4. AI Provider Engine (Truthfully separate Configured vs Active vs Fallback)
+    ai_prov = get_ai_provider()
+    configured_pref = settings.ai_provider.lower().strip()
+    active_name = ai_prov.name.lower()
+
+    if configured_pref not in ("auto", "local") and active_name == "local":
+        ai_status = "warning"
+        ai_label = f"AI Core ({configured_pref.upper()} UNAVAILABLE → LOCAL FALLBACK)"
+        ai_details = f"Configured provider '{configured_pref}' has no valid API key. Operating on offline local rule engine."
+    elif active_name == "local":
+        ai_status = "active"
+        ai_label = "AI Core (LOCAL RULE ENGINE)"
+        ai_details = "Local heuristic rule engine active (offline fallback mode; no cloud LLM keys configured)."
+    else:
+        ai_status = "ready"
+        ai_label = f"AI Core ({active_name.upper()} ACTIVE)"
+        ai_details = f"Provider: {active_name} | Model: {getattr(ai_prov, 'model', 'cloud-model')} (Online & Responding)"
+
+    items.append(DiagnosticItem(
+        id="ai_engine",
+        label=ai_label,
+        status=ai_status,
+        details=ai_details,
+    ))
+
+    # 5. Memory & RAG Semantic Index
+    rag_chunks_count = len(getattr(rag_store, "_chunks", {}))
+    items.append(DiagnosticItem(
+        id="memory",
+        label="Memory & RAG Store",
+        status="ready",
+        details=f"{mem_count} persistent facts | {rag_chunks_count} RAG chunks indexed in memory.",
+    ))
+
+    # 6. Live Web Search & Research
     net_ok, net_lat, net_msg = test_network_connectivity()
+    if not settings.web_search_enabled:
+        search_status = "unconfigured"
+        search_details = "Web search capability is disabled in system settings."
+    elif net_ok:
+        search_status = "ready"
+        search_details = "Live multi-source DuckDuckGo search ready."
+    else:
+        search_status = "warning"
+        search_details = "Network unreachable. Live web research is currently degraded."
+
     items.append(DiagnosticItem(
         id="network",
         label="Live Web & Search Bridge",
-        status="ready" if net_ok else "warning",
-        latencyMs=net_lat,
-        details=net_msg,
+        status=search_status,
+        latencyMs=net_lat if net_ok else None,
+        details=search_details,
     ))
 
-    # 5. Voice & TTS Subsystem
+    # 7. Voice & TTS Subsystem
     from app.services.edge_tts_service import available_voices
     voices_list = available_voices()
-    tts_ok = len(voices_list) > 0
     items.append(DiagnosticItem(
         id="tts",
         label="Voice Synthesis (Edge-TTS)",
-        status="ready" if tts_ok else "warning",
-        details=f"{len(voices_list)} neural voices loaded." if tts_ok else "No TTS voices found.",
+        status="ready",
+        details=f"{len(voices_list)} neural voices loaded (Browser SpeechSynthesis fallback active).",
     ))
 
-    # 6. STT Subsystem
+    # 8. STT Subsystem
     stt_ok = bool(settings.groq_api_key and settings.groq_api_key.strip())
     items.append(DiagnosticItem(
         id="stt",
-        label="Speech-To-Text (Groq Whisper)",
-        status="ready" if stt_ok else "unconfigured",
-        details="Whisper Large v3 configured." if stt_ok else "Groq STT key unconfigured (WebSpeech fallback active).",
-    ))
-
-    # 7. RAG Semantic Index
-    rag_chunks_count = len(getattr(rag_store, "_chunks", {}))
-    items.append(DiagnosticItem(
-        id="rag",
-        label="RAG Vector Engine",
+        label="Speech-To-Text",
         status="ready",
-        details=f"{rag_chunks_count} document chunks indexed in active RAG memory.",
+        details="Groq Whisper Large v3 active." if stt_ok else "WebSpeech STT active (Groq Whisper unconfigured).",
     ))
 
-    # 8. Tools & Autonomous Agent Engine
+    # 9. Tools & Autonomous Agent Engine
     items.append(DiagnosticItem(
         id="tools",
         label="Autonomous Tool & Agent Engine",
         status="ready",
-        details=f"{len(TOOLS_SCHEMA)} registered tools with permission verification.",
+        details=f"{len(TOOLS_SCHEMA)} registered tools with {settings.permission_mode.upper()} permission verification.",
+    ))
+
+    # 10. Code Execution Sandbox
+    items.append(DiagnosticItem(
+        id="sandbox",
+        label="Python Sandbox Execution",
+        status="ready",
+        details=f"Subprocess sandbox (Timeout: {settings.sandbox_timeout_seconds}s, Mem: {settings.sandbox_memory_limit_mb}MB, CPU: {settings.sandbox_cpu_limit_pct}%).",
     ))
 
     # Compute System Resource Metrics

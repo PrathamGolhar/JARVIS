@@ -7,7 +7,10 @@ from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
+try:
+    from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS
 
 from app.schemas import Citation, ResearchResponse
 from app.services.ai.factory import get_ai_provider
@@ -149,14 +152,22 @@ def perform_deep_research(
     except Exception as exc:
         logger.warning("Research synthesis error: %s", exc)
         topic = query
-        summary = f"Synthesized live web intelligence across {len(citations)} verified sources for query '{query}'."
-        key_takeaways = [c.title for c in citations[:4]] or ["Analysis completed with available web intelligence."]
-        report_md = (
-            f"# Intelligence Report: {query}\n\n"
-            f"## Executive Summary\n{summary}\n\n"
-            f"## Verified Sources & Key Findings\n"
-            + "\n".join(f"- **{c.title}** ({c.domain}): {c.snippet}" for c in citations)
-        )
+        if citations:
+            summary = f"Synthesized live web intelligence across {len(citations)} verified sources for query '{query}'."
+            key_takeaways = [c.title for c in citations[:4]]
+            report_md = (
+                f"# Intelligence Report: {query}\n\n"
+                f"## Executive Summary\n{summary}\n\n"
+                f"## Verified Sources & Key Findings\n"
+                + "\n".join(f"- **{c.title}** ({c.domain}): {c.snippet}" for c in citations)
+            )
+        else:
+            summary = "Web research is temporarily unavailable. Live web access could not retrieve external sources."
+            key_takeaways = ["Live web research unavailable."]
+            report_md = (
+                f"# Research Report: {query}\n\n"
+                "Web research is temporarily unavailable. Live search providers were unreachable for this request."
+            )
 
     # Optional PDF Document generation
     file_url = None

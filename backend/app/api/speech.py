@@ -1,6 +1,9 @@
 import asyncio
+import logging
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+
+logger = logging.getLogger("jarvis.speech")
 
 from app.schemas import TranscriptResponse, TtsRequest, VoicesResponse
 from app.services.edge_tts_service import EdgeTtsError, available_voices, generate_speech
@@ -124,8 +127,13 @@ async def tts(request: TtsRequest) -> Response:
         audio = await generate_speech(request.text, request.voice_id)
         return Response(content=audio, media_type="audio/mpeg")
     except EdgeTtsError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.warning("Edge TTS synthesis failed for voice '%s': %s", request.voice_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Edge TTS synthesis unavailable: {exc}",
+        ) from exc
     except Exception as exc:
+        logger.error("Failed to generate speech audio: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate speech audio.",

@@ -26,10 +26,34 @@ if (Test-Path $backendVenvPy) {
     Write-Host "Using system Python (no venv found)" -ForegroundColor Yellow
 }
 
+# Check prerequisites
+if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+    Write-Host "[ERROR] Node.js and npm are required but were not found in PATH." -ForegroundColor Red
+    Write-Host "Please install Node.js 18+ from https://nodejs.org/" -ForegroundColor Yellow
+    exit 1
+}
+
+# Check for port conflicts before starting
+function Test-PortInUse ($port) {
+    try {
+        $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+        return ($null -ne $conn)
+    } catch {
+        return $false
+    }
+}
+
+if (Test-PortInUse 8765) {
+    Write-Host "[WARNING] Port 8765 is already active! A backend process may already be running." -ForegroundColor Yellow
+}
+if (Test-PortInUse 1420) {
+    Write-Host "[WARNING] Port 1420 is already active! A frontend process may already be running." -ForegroundColor Yellow
+}
+
 # 1. Launch FastAPI Backend
 Write-Host "[1/2] Starting FastAPI Backend on http://127.0.0.1:8765 ..." -ForegroundColor Green
 $backendCmd = "Set-Location '$backendDir'; & '$pythonExe' -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload"
-Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd
+Start-Process powershell -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", $backendCmd
 
 # Brief pause so the backend binds its port before Vite starts making proxy calls
 Start-Sleep -Seconds 2
@@ -37,7 +61,7 @@ Start-Sleep -Seconds 2
 # 2. Launch React + Vite Frontend
 Write-Host "[2/2] Starting React + Vite Frontend on http://localhost:1420 ..." -ForegroundColor Green
 $frontendCmd = "Set-Location '$frontendDir'; npm run dev"
-Start-Process powershell -ArgumentList "-NoExit", "-Command", $frontendCmd
+Start-Process powershell -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", $frontendCmd
 
 # Wait for Vite dev server to initialize, then launch the HUD in browser
 Start-Sleep -Seconds 2

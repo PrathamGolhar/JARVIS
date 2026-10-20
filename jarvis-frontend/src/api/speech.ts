@@ -47,6 +47,8 @@ export async function fetchVoices(): Promise<Voice[]> {
   return body.voices;
 }
 
+import { JarvisApiError, parseApiError } from "./errors";
+
 export async function requestSpeech(text: string, voiceId: string): Promise<Blob> {
   let response: Response;
   try {
@@ -56,16 +58,25 @@ export async function requestSpeech(text: string, voiceId: string): Promise<Blob
       body: JSON.stringify({ text, voiceId }),
     });
   } catch (err) {
-    throw new Error(
-      err instanceof Error && err.name === "AbortError"
+    throw new JarvisApiError({
+      category: "TTS_ERROR",
+      endpoint: "/api/tts",
+      message: err instanceof Error && err.name === "AbortError"
         ? "Speech synthesis was cancelled."
-        : "Speech synthesis connection error."
-    );
+        : "Speech synthesis connection error.",
+      isRetryable: true,
+    });
   }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(body.detail ?? `TTS generation failed (HTTP ${response.status}).`);
+    throw new JarvisApiError({
+      category: "TTS_ERROR",
+      statusCode: response.status,
+      endpoint: "/api/tts",
+      message: body.detail ?? `TTS generation failed (HTTP ${response.status}).`,
+      isRetryable: response.status === 502 || response.status === 503,
+    });
   }
   return response.blob();
 }

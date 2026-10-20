@@ -385,12 +385,14 @@ def execute_tool_call(tool_name: str, raw_arguments: str | dict[str, Any]) -> di
                 query=args.get("query", ""),
                 depth=args.get("depth", "deep"),
             )
+            findings_text = getattr(research, "findings_markdown", getattr(research, "findingsMarkdown", ""))
+            takeaways = getattr(research, "key_takeaways", getattr(research, "keyTakeaways", []))
             return {
                 "ok": True,
                 "topic": research.topic,
                 "summary": research.summary,
-                "findings": research.findingsMarkdown[:3000],
-                "keyTakeaways": research.keyTakeaways,
+                "findings": findings_text[:3000],
+                "keyTakeaways": takeaways,
                 "citations": [c.model_dump() for c in research.citations[:8]],
                 "message": f"Deep research on '{research.topic}' completed with {len(research.citations)} verified sources.",
             }
