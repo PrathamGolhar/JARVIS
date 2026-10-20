@@ -67,3 +67,9 @@ jobs:
       - name: TypeScript check + production build
         working-directory: jarvis-frontend
         run: npm run build
+
+      - name: Verify build artifact integrity
+        working-directory: jarvis-frontend
+        run: |
+          test -f dist/index.html
+          test -s dist/index.html

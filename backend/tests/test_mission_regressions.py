@@ -25,13 +25,19 @@ client = TestClient(app)
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-def test_regression_01_frontend_build_artifacts():
-    """TEST 1: React/frontend production build succeeds and outputs index.html."""
-    dist_dir = REPO_ROOT / "jarvis-frontend" / "dist"
-    index_html = dist_dir / "index.html"
-    assert index_html.exists(), "Frontend dist/index.html must exist after npm run build"
-    content = index_html.read_text(encoding="utf-8")
-    assert "<div id=\"root\">" in content or "script" in content
+def test_regression_01_frontend_structure_and_config():
+    """TEST 1: Frontend core entry points, configuration, and build scripts exist."""
+    front_dir = REPO_ROOT / "jarvis-frontend"
+    assert (front_dir / "package.json").exists(), "Frontend package.json must exist"
+    assert (front_dir / "package-lock.json").exists(), "Frontend package-lock.json must exist"
+    assert (front_dir / "vite.config.ts").exists(), "Frontend vite.config.ts must exist"
+    assert (front_dir / "index.html").exists(), "Frontend index.html template must exist"
+    assert (front_dir / "src" / "main.tsx").exists(), "Frontend src/main.tsx must exist"
+    assert (front_dir / "src" / "App.tsx").exists(), "Frontend src/App.tsx must exist"
+
+    pkg = json.loads((front_dir / "package.json").read_text(encoding="utf-8"))
+    assert "build" in pkg.get("scripts", {}), "package.json must contain build script"
+    assert "tsc -b" in pkg["scripts"]["build"], "build script must run TypeScript project check"
 
 
 def test_regression_02_typescript_config_integrity():
