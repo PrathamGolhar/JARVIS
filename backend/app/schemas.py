@@ -296,6 +296,13 @@ class CodeAnalysisRequest(BaseModel):
     task: Literal["explain", "debug", "refactor", "generate_tests", "optimize"] = "explain"
 
 
+class CodeAnalysisResponse(BaseModel):
+    analysis: str
+    fixed_or_improved_code: str = Field(default="", alias="fixedOrImprovedCode")
+    test_code: str = Field(default="", alias="testCode")
+    complexity_score: str = Field(default="", alias="complexityScore")
+
+
 # Projects
 class ProjectTaskItem(BaseModel):
     id: str
