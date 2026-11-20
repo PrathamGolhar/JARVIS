@@ -296,13 +296,6 @@ class CodeAnalysisRequest(BaseModel):
     task: Literal["explain", "debug", "refactor", "generate_tests", "optimize"] = "explain"
 
 
-class CodeAnalysisResponse(BaseModel):
-    analysis: str
-    fixed_or_improved_code: str = Field(default="", alias="fixedOrImprovedCode")
-    test_code: str = Field(default="", alias="testCode")
-    complexity_score: str = Field(default="", alias="complexityScore")
-
-
 # Projects
 class ProjectTaskItem(BaseModel):
     id: str
@@ -329,16 +322,16 @@ class ProjectCreateRequest(BaseModel):
 
 # Memory & Preferences
 class MemoryItem(BaseModel):
-    key: str
-    value: str
-    category: str = "general"
+    key: str = Field(min_length=1, max_length=160)
+    value: str = Field(min_length=1, max_length=10_000)
+    category: str = Field(default="general", min_length=1, max_length=40)
     updated_at: str = Field(alias="updatedAt")
 
 
 class MemorySetRequest(BaseModel):
-    key: str
-    value: str
-    category: str = "general"
+    key: str = Field(min_length=1, max_length=160)
+    value: str = Field(min_length=1, max_length=10_000)
+    category: str = Field(default="general", min_length=1, max_length=40)
 
 
 # Automation & Reminders
