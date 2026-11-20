@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.memory.persistent_memory import PersistentMemoryStore
+from app.services.projects.manager import project_manager
 
 
 @pytest.fixture
@@ -123,3 +124,23 @@ def test_memory_api_crud(monkeypatch, tmp_path):
     deleted = client.delete("/api/memory/preferred_board")
     assert deleted.status_code == 200
     assert client.get("/api/memory/preferred_board").status_code == 404
+
+
+def test_project_manager_crud_and_tasks() -> None:
+    proj = project_manager.create_project(name="Mars Rover Simulation", description="Autonomous rover navigation")
+    assert proj.id
+    assert proj.name == "Mars Rover Simulation"
+
+    updated = project_manager.add_task(proj.id, "Implement LiDAR SLAM filter")
+    assert updated is not None
+    assert len(updated.tasks) == 1
+    task_id = updated.tasks[0].id
+    assert updated.tasks[0].completed is False
+
+    toggled = project_manager.toggle_task(proj.id, task_id)
+    assert toggled is not None
+    assert toggled.tasks[0].completed is True
+
+    context_str = project_manager.build_project_context(proj.id)
+    assert "Mars Rover Simulation" in context_str
+    assert "LiDAR SLAM filter" in context_str
