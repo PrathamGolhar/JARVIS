@@ -80,6 +80,19 @@ class PersistentMemoryStore:
                     )
                 """)
 
+                message_columns = {
+                    row["name"] for row in conn.execute("PRAGMA table_info(messages)")
+                }
+                if "tool_name" not in message_columns:
+                    conn.execute("ALTER TABLE messages ADD COLUMN tool_name TEXT")
+                if "tool_call_id" not in message_columns:
+                    conn.execute("ALTER TABLE messages ADD COLUMN tool_call_id TEXT")
+                if "created_at" not in message_columns:
+                    conn.execute("ALTER TABLE messages ADD COLUMN created_at TEXT")
+                    conn.execute(
+                        "UPDATE messages SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"
+                    )
+
                 memory_columns = {
                     row["name"] for row in conn.execute("PRAGMA table_info(memories)")
                 }
