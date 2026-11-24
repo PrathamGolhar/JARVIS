@@ -52,55 +52,55 @@ class TaskClassifier:
         prompt: str,
         has_images: bool = False,
         has_documents: bool = False,
-        force_local: bool = False,
+        force_local: bool | None = None,
+        mode: str = "general",
     ) -> TaskCategory:
-        if force_local or settings.ai_provider == "local":
+        if force_local is None:
+            force_local = settings.ai_provider == "local"
+        if force_local:
             return TaskCategory.OFFLINE_LOCAL
 
         if has_images:
             return TaskCategory.VISION_MULTIMODAL
 
         text = prompt.lower().strip()
+        explicit_mode_categories = {
+            "coding": TaskCategory.CODING_AND_SYNTAX,
+            "research": TaskCategory.RESEARCH_ANALYSIS,
+            "study": TaskCategory.DOCUMENT_SYNTHESIS,
+            "document": TaskCategory.DOCUMENT_SYNTHESIS,
+            "presentation": TaskCategory.DOCUMENT_SYNTHESIS,
+        }
+        if mode in explicit_mode_categories:
+            return explicit_mode_categories[mode]
 
-        # Coding / Syntax / Refactoring markers (Checked first to distinguish code functions from math)
-        if any(w in text for w in [
-            "def ", "class ", "function", "bug", "syntax error", "refactor",
-            "unit test", "c++", "python", "javascript", "sql query", "async def",
-            "pytest", "git commit", "dockerfile", "endpoint", "api schema"
-        ]):
-            return TaskCategory.CODING_AND_SYNTAX
+        # Rank multiple independent signals so incidental words do not dominate intent.
+        scores = {category: 0 for category in TaskCategory}
+        if re.search(r"```|^\s*(?:def |class |import |from )|traceback|syntax error", text, re.M):
+            scores[TaskCategory.CODING_AND_SYNTAX] += 3
+        if re.search(r"\b(?:debug|refactor|implement|compile|pytest|unit test|code review)\b", text):
+            scores[TaskCategory.CODING_AND_SYNTAX] += 2
+        if re.search(r"\b(?:python|javascript|typescript|rust|java|c\+\+|sql)\b", text):
+            scores[TaskCategory.CODING_AND_SYNTAX] += 1
+        if re.search(r"\b(?:calculate|solve|derivative|integral|matrix|eigenvalue|determinant|regression|equation)\b", text):
+            scores[TaskCategory.MATHEMATICS_COMPUTE] += 2
+        if re.search(r"\b\d+(?:\.\d+)?\s*(?:\+|-|\*|/|\^)\s*\d", text) or re.search(r"\b(?:what is|how much is)\s+\d", text):
+            scores[TaskCategory.MATHEMATICS_COMPUTE] += 2
+        if re.search(r"\b(?:research|investigate|literature review|compare sources|citations|find papers)\b", text):
+            scores[TaskCategory.RESEARCH_ANALYSIS] += 3
+        if re.search(r"\b(?:report|presentation|slide deck|spreadsheet|document|summarize these)\b", text):
+            scores[TaskCategory.DOCUMENT_SYNTHESIS] += 2
+        if has_documents:
+            scores[TaskCategory.DOCUMENT_SYNTHESIS] += 3
+        if re.search(r"\b(?:why|explain|analyze|reason|trade-?offs|design)\b", text):
+            scores[TaskCategory.DEEP_REASONING] += 1
 
-        # Math / Computation markers
-        if any(w in text for w in [
-            "calculate", "derivative", "integral", "matrix", "eigenvalue",
-            "solve for x", "determinant", "standard deviation", "quadratic",
-            "linear regression", "logarithm", "cosine", "sine"
-        ]):
-            return TaskCategory.MATHEMATICS_COMPUTE
+        top_category = max(scores, key=scores.get)
+        if scores[top_category] > 0:
+            return top_category
 
-        # Research / Multi-source markers
-        if any(w in text for w in [
-            "research", "investigate", "compare sources", "citations", "find papers",
-            "academic review", "literature review", "web survey"
-        ]):
-            return TaskCategory.RESEARCH_ANALYSIS
-
-        # Document synthesis / Study / Presentation
-        if has_documents or any(w in text for w in [
-            "create presentation", "make notes", "exam prep", "generate pdf",
-            "generate docx", "research report", "summarize pdf", "powerpoint", "slide deck"
-        ]):
-            return TaskCategory.DOCUMENT_SYNTHESIS
-
-        # Simple conversational queries (greetings, quick clarifications, status checks)
-        direct_simple = [
-            "hello", "hi", "hey", "who are you", "what time is it", "how are you",
-            "good morning", "good evening", "thank you", "thanks", "status report"
-        ]
-        if text in direct_simple or (len(text.split()) <= 15 and not any(w in text for w in ["plan", "build", "execute", "analyze", "why", "how does"])):
+        if len(text.split()) <= 15:
             return TaskCategory.SIMPLE_CONVERSATION
-
-        # Deep reasoning fallback
         return TaskCategory.DEEP_REASONING
 
 
@@ -122,7 +122,30 @@ class ModelRouter:
         has_images: bool = False,
         has_documents: bool = False,
         user_override: str | None = None,
+        mode: str = "general",
     ) -> RouteDecision:
+        category = TaskClassifier.classify(
+            prompt,
+            has_images=has_images,
+            has_documents=has_documents,
+            force_local=(
+                (user_override or "").lower() == "local"
+                if user_override
+                else settings.ai_provider == "local"
+            ),
+            mode=mode,
+        )
+
+        if category == TaskCategory.OFFLINE_LOCAL:
+            return RouteDecision(
+                category=category,
+                provider_name="local",
+                recommended_model="local-rule-engine",
+                reason="Offline local mode is explicitly selected",
+                estimated_latency_tier="ultra-fast",
+                estimated_cost_tier="free",
+            )
+
         # 0. Check User Override
         if user_override and user_override.lower() != "auto":
             prov_name = user_override.lower()
@@ -133,16 +156,16 @@ class ModelRouter:
                 "anthropic": settings.anthropic_model,
                 "local": "local-rule-engine",
             }
+            if prov_name not in model_map:
+                raise ValueError(f"Unknown AI provider override: {user_override}")
             return RouteDecision(
-                category=TaskCategory.DEEP_REASONING,
+                category=category,
                 provider_name=prov_name,
                 recommended_model=model_map.get(prov_name, "default"),
                 reason="User explicitly selected manual model provider override",
                 estimated_latency_tier="standard",
                 estimated_cost_tier="medium",
             )
-
-        category = TaskClassifier.classify(prompt, has_images=has_images, has_documents=has_documents)
 
         # 1. Vision & Multimodal -> Gemini (Highest multimodal vision fidelity)
         if category == TaskCategory.VISION_MULTIMODAL:
@@ -156,6 +179,34 @@ class ModelRouter:
                     estimated_latency_tier="standard",
                     estimated_cost_tier="low",
                 )
+            openai = OpenAIProvider()
+            if cls._is_provider_healthy(openai, "openai"):
+                return RouteDecision(
+                    category=category,
+                    provider_name="openai",
+                    recommended_model=openai.model,
+                    reason="Available vision-capable provider fallback",
+                    estimated_latency_tier="standard",
+                    estimated_cost_tier="medium",
+                )
+            anthropic = AnthropicProvider()
+            if cls._is_provider_healthy(anthropic, "anthropic"):
+                return RouteDecision(
+                    category=category,
+                    provider_name="anthropic",
+                    recommended_model=anthropic.model,
+                    reason="Available vision-capable provider fallback",
+                    estimated_latency_tier="standard",
+                    estimated_cost_tier="high",
+                )
+            return RouteDecision(
+                category=category,
+                provider_name="local",
+                recommended_model="local-rule-engine",
+                reason="No cloud vision-capable provider is available",
+                estimated_latency_tier="ultra-fast",
+                estimated_cost_tier="free",
+            )
 
         # 2. Simple Conversational / Low-Latency -> Groq (Llama-3.3 ultra-fast inference)
         if category == TaskCategory.SIMPLE_CONVERSATION:

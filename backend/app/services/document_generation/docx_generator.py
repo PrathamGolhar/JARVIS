@@ -48,7 +48,7 @@ def generate_docx_document(
 
         footer = section.footer
         fp = footer.paragraphs[0]
-        fp.text = f"Confidential & Prepared for Master — {datetime.now().strftime('%Y-%m-%d')}"
+        fp.text = f"Confidential & Prepared by JARVIS — {datetime.now().strftime('%Y-%m-%d')}"
         fp.alignment = WD_ALIGN_PARAGRAPH.LEFT
         fp.runs[0].font.size = Pt(8.5)
         fp.runs[0].font.color.rgb = RGBColor(148, 163, 184)

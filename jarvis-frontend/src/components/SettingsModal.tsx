@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchSettings, SettingsStatus, updateSettings } from "../api/settings";
 import { Voice } from "../api/speech";
+import { ResponseStyle } from "../api/chat";
 import { showToast } from "./ToastNotificationSystem";
 
 type SettingsModalProps = {
   voices: Voice[];
   selectedVoiceId: string;
   onSelectVoice: (id: string) => void;
+  selectedMicrophoneId: string;
+  onSelectMicrophone: (id: string) => void;
+  responseStyle: ResponseStyle;
+  onSelectResponseStyle: (style: ResponseStyle) => void;
   wakeWordEnabled: boolean;
   onToggleWakeWord: (enabled: boolean) => void;
   onClose: () => void;
@@ -16,6 +21,10 @@ export function SettingsModal({
   voices,
   selectedVoiceId,
   onSelectVoice,
+  selectedMicrophoneId,
+  onSelectMicrophone,
+  responseStyle,
+  onSelectResponseStyle,
   wakeWordEnabled,
   onToggleWakeWord,
   onClose,
@@ -29,7 +38,12 @@ export function SettingsModal({
   const [elevenlabsKey, setElevenlabsKey] = useState("");
   const [permissionMode, setPermissionMode] = useState("assisted");
   const [saving, setSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
+  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [microphoneError, setMicrophoneError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const titleId = "settings-modal-title";
 
   useEffect(() => {
@@ -39,22 +53,70 @@ export function SettingsModal({
         setSettingsStatus(s);
         setAiProvider(s.aiProvider);
         setPermissionMode(s.permissionMode);
-      } catch {
-        // Error
+      } catch (error) {
+        setSettingsError(error instanceof Error ? error.message : "Unable to load system settings.");
       }
     })();
   }, []);
 
-  // Escape key handler
   useEffect(() => {
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices?.enumerateDevices) {
+      setMicrophoneError("Microphone selection is unavailable in this browser context.");
+      return;
+    }
+
+    let active = true;
+    const loadMicrophones = async () => {
+      try {
+        const devices = await mediaDevices.enumerateDevices();
+        if (active) {
+          setMicrophones(devices.filter((device) => device.kind === "audioinput"));
+          setMicrophoneError("");
+        }
+      } catch {
+        if (active) setMicrophoneError("Microphone devices could not be listed. The system default remains available.");
+      }
+    };
+
+    void loadMicrophones();
+    mediaDevices.addEventListener("devicechange", loadMicrophones);
+    return () => {
+      active = false;
+      mediaDevices.removeEventListener("devicechange", loadMicrophones);
+    };
+  }, []);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === "Escape") {
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !dialog) return;
+      const focusable = dialog.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', handleKeyDown);
-    // Focus trap: move focus to dialog on mount
-    dialogRef.current?.focus();
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+    dialog?.focus();
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);
@@ -67,9 +129,9 @@ export function SettingsModal({
         anthropicApiKey: anthropicKey || undefined,
         elevenlabsApiKey: elevenlabsKey || undefined,
         permissionMode,
-        wakeWordEnabled,
       });
       setSettingsStatus(updated);
+      setSettingsError("");
       showToast({
         title: "Configuration Saved",
         message: "JARVIS system settings have been updated.",
@@ -159,6 +221,7 @@ export function SettingsModal({
 
       {/* Main Settings Form */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: "20px" }}>
+      {settingsError && <p className="error" role="alert">{settingsError}</p>}
         {/* Section 1: AI Provider */}
         <div style={{ background: "rgba(15, 30, 50, 0.5)", padding: "16px", borderRadius: "10px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
           <h3 style={{ margin: "0 0 12px 0", fontSize: "13px", color: "#00d9ff" }}>1. AI MODEL PROVIDER</h3>
@@ -229,18 +292,19 @@ export function SettingsModal({
           </div>
         </div>
 
-        {/* Section 2: Voice & Wake Word */}
+        {/* Section 2: Voice & Personality */}
         <div style={{ background: "rgba(15, 30, 50, 0.5)", padding: "16px", borderRadius: "10px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
-          <h3 style={{ margin: "0 0 12px 0", fontSize: "13px", color: "#00d9ff" }}>2. NEURAL VOICE & WAKE WORD</h3>
+          <h3 style={{ margin: "0 0 12px 0", fontSize: "13px", color: "#00d9ff" }}>2. VOICE & RESPONSE STYLE</h3>
           
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", alignItems: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "16px", alignItems: "center" }}>
             <div>
               <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "4px" }}>
-                Synthesis Voice (Edge-TTS Neural)
+                English synthesis voice
               </label>
               <select
                 value={selectedVoiceId}
                 onChange={(e) => onSelectVoice(e.target.value)}
+                aria-label="English synthesis voice"
                 style={{ width: "100%", padding: "8px 10px", background: "rgba(8, 16, 28, 0.9)", border: "1px solid rgba(0, 217, 255, 0.3)", borderRadius: "6px", color: "#fff", fontSize: "12px" }}
               >
                 {voices.map((v) => (
@@ -249,15 +313,68 @@ export function SettingsModal({
               </select>
             </div>
 
+            <div>
+              <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "4px" }}>
+                Microphone input
+              </label>
+              <select
+                value={selectedMicrophoneId}
+                onChange={(event) => onSelectMicrophone(event.currentTarget.value)}
+                aria-label="Microphone input"
+                style={{ width: "100%", padding: "8px 10px", background: "rgba(8, 16, 28, 0.9)", border: "1px solid rgba(0, 217, 255, 0.3)", borderRadius: "6px", color: "#fff", fontSize: "12px" }}
+              >
+                <option value="">System default</option>
+                {microphones.map((device, index) => (
+                  <option key={device.deviceId || `microphone-${index}`} value={device.deviceId}>
+                    {device.label || `Microphone ${index + 1}`}
+                  </option>
+                ))}
+                {selectedMicrophoneId && !microphones.some((device) => device.deviceId === selectedMicrophoneId) && (
+                  <option value={selectedMicrophoneId}>Saved microphone (not detected)</option>
+                )}
+              </select>
+              <span style={{ display: "block", marginTop: "4px", fontSize: "10px", color: "#94a3b8" }}>
+                Device names may appear after microphone permission is granted.
+              </span>
+              {microphoneError && <p className="error" role="status">{microphoneError}</p>}
+            </div>
+
+            <div>
+              <label style={{ fontSize: "11px", color: "#94a3b8", display: "block", marginBottom: "4px" }}>
+                Response detail
+              </label>
+              <select
+                value={responseStyle}
+                onChange={(event) => {
+                  const style = event.currentTarget.value;
+                  if (style === "concise" || style === "balanced" || style === "detailed") {
+                    onSelectResponseStyle(style);
+                  }
+                }}
+                aria-label="Response detail"
+                style={{ width: "100%", padding: "8px 10px", background: "rgba(8, 16, 28, 0.9)", border: "1px solid rgba(0, 217, 255, 0.3)", borderRadius: "6px", color: "#fff", fontSize: "12px" }}
+              >
+                <option value="concise">Concise</option>
+                <option value="balanced">Balanced (default)</option>
+                <option value="detailed">Detailed</option>
+              </select>
+              <span style={{ display: "block", marginTop: "4px", fontSize: "10px", color: "#94a3b8" }}>
+                Saved in this browser; used for the next message.
+              </span>
+            </div>
+
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(8, 16, 28, 0.6)", padding: "10px 14px", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
               <div>
-                <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#ffffff", display: "block" }}>Wake Word ("JARVIS")</span>
-                <span style={{ fontSize: "10px", color: "#94a3b8" }}>Voice-activated trigger</span>
+                <label htmlFor="wake-word-enabled" style={{ fontSize: "12.5px", fontWeight: 600, color: "#ffffff", display: "block" }}>Require “JARVIS” in hands-free mode</label>
+                <span id="wake-word-description" style={{ fontSize: "10px", color: "#94a3b8" }}>Voice link starts only when you activate it; no background listening.</span>
               </div>
               <input
+                id="wake-word-enabled"
                 type="checkbox"
                 checked={wakeWordEnabled}
                 onChange={(e) => onToggleWakeWord(e.target.checked)}
+                aria-describedby="wake-word-description"
+                aria-label="Require the JARVIS wake word during hands-free voice input"
                 style={{ width: "18px", height: "18px", cursor: "pointer" }}
               />
             </div>
@@ -268,7 +385,7 @@ export function SettingsModal({
         <div style={{ background: "rgba(15, 30, 50, 0.5)", padding: "16px", borderRadius: "10px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
           <h3 style={{ margin: "0 0 12px 0", fontSize: "13px", color: "#00d9ff" }}>3. SECURITY & PERMISSION TIER</h3>
           
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px" }}>
             {[
               { id: "read_only", label: "READ ONLY", desc: "No file writes or desktop launches" },
               { id: "assisted", label: "ASSISTED (Recommended)", desc: "Requires confirmation modal for high-impact actions" },
@@ -276,9 +393,11 @@ export function SettingsModal({
             ].map((tier) => {
               const isSelected = permissionMode === tier.id;
               return (
-                <div
+                <button
                   key={tier.id}
+                  type="button"
                   onClick={() => setPermissionMode(tier.id)}
+                  aria-pressed={isSelected}
                   style={{
                     padding: "10px 12px",
                     background: isSelected ? "rgba(0, 217, 255, 0.2)" : "rgba(8, 16, 28, 0.6)",
@@ -289,7 +408,7 @@ export function SettingsModal({
                 >
                   <strong style={{ fontSize: "12px", color: isSelected ? "#64ffda" : "#ffffff", display: "block" }}>{tier.label}</strong>
                   <p style={{ margin: "4px 0 0 0", fontSize: "10.5px", color: "#94a3b8" }}>{tier.desc}</p>
-                </div>
+                </button>
               );
             })}
           </div>

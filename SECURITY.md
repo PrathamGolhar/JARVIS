@@ -9,10 +9,11 @@ Security is a foundational pillar of JARVIS. Because JARVIS is designed as an au
 JARVIS implements fail-closed authentication for all administrative, conversational, coding, file, and system endpoints (`app/services/auth.py`):
 
 - **Master API Key**: High-entropy cryptographically generated key configured via `JARVIS_API_KEY`. If unconfigured, a secure ephemeral key is generated on startup.
-- **Session Tokens**: Temporary, high-entropy tokens issued via `POST /api/auth/token` for authenticated browser/client sessions.
-- **Constant-Time Verification**: All credentials are evaluated using constant-time comparisons (`hmac.compare_digest`) to prevent timing side-channel attacks.
-- **Authentication Dependency**: FastAPI dependency `require_auth` protects `/api/chat`, `/api/settings`, `/api/code/*`, `/api/files/*`, `/api/projects/*`, `/api/memory/*`, `/api/automation/*`, and `/api/local-actions/*`. Unauthenticated requests receive `401 Unauthorized`.
-- **Public Endpoints**: Only `/health`, `/api/health`, and `/api/auth/status` are publicly accessible.
+- **Session Tokens**: High-entropy tokens issued via `POST /api/auth/token` with 24-hour TTL expiration and instant revocation support (`POST /api/auth/revoke`).
+- **Constant-Time Verification**: All credentials and tokens are evaluated using constant-time comparisons (`hmac.compare_digest`) to prevent timing side-channel attacks.
+- **Authoritative Protection**: FastAPI dependency `require_auth` protects all operational endpoints: `/api/chat`, `/api/settings`, `/api/code/*`, `/api/files/*`, `/api/projects/*`, `/api/memory/*`, `/api/automation/*`, `/api/local-actions/*`, `/api/speech/*` (`/api/tts`, `/api/transcribe`, `/api/voices`), `/api/diagnostics`, `/api/capabilities/*`, `/api/research/*`, and `/api/generate/*`. Unauthenticated requests receive `401 Unauthorized`.
+- **Public Endpoints**: Strictly limited to `/health`, `/api/health`, `/api/auth/status`, and `/api/auth/token`.
+- **Privilege Elevation Defense**: Elevating `permission_mode` to `full_control` via `POST /api/settings` requires explicit re-authentication (`masterApiKey` or one-time confirmation token).
 
 ---
 
@@ -81,6 +82,7 @@ The web scraping and research engine enforces comprehensive Server-Side Request 
 - **Private & Reserved IP Blocking**: All private RFC1918, loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`, `fe80::/10`), carrier-grade NAT (`100.64.0.0/10`), multicast (`224.0.0.0/4`), and reserved ranges are blocked.
 - **Cloud Metadata Defense**: Cloud metadata hostnames (`169.254.169.254`, `metadata.google.internal`, `instance-data`) are explicitly blocked.
 - **DNS Resolution & Rebinding Defense**: Hostnames are resolved to IP addresses via `socket.getaddrinfo`. If *any* resolved address is restricted, the connection is aborted.
+- **DNS TOCTOU Pinned IP Socket Binding**: `PinnedIPAdapter` binds TCP socket connections directly to the pre-validated destination IP, eliminating time-of-check to time-of-use (TOCTOU) DNS rebinding races while preserving TLS certificate hostname validation (`server_hostname`).
 - **Redirect Hop Inspection**: Redirects are followed manually with `allow_redirects=False` (max 3 hops). Every redirect destination is re-validated against DNS and IP restrictions before connecting.
 - **Response Size Caps**: Web responses stream up to 5 MB max before truncation, preventing denial-of-service memory exhaustion.
 - **Strict Timeouts**: Enforces connection (3.5s) and read (7.5s) timeouts.

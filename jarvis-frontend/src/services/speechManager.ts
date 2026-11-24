@@ -12,9 +12,11 @@
 
 import { checkSpeechHealth, SpeechHealthStatus, transcribeRecording } from "../api/speech";
 import { aiVisualController } from "./aiVisualController";
+import { createMicrophoneConstraints } from "./audioConstraints";
 
 export type VoiceState =
   | "IDLE"
+  | "REQUESTING_MICROPHONE"
   | "LISTENING"
   | "VOICE_DETECTED"
   | "TRANSCRIBING"
@@ -51,6 +53,7 @@ export type ListenMode = "push-to-talk" | "continuous";
 export interface SpeechListenOptions {
   mode?: ListenMode;
   lang?: string;
+  deviceId?: string;
   onInterimTranscript?: (text: string) => void;
   onFinalTranscript: (text: string) => void;
   onError: (userMessage: string, technicalCode: STTStatus) => void;
@@ -101,6 +104,8 @@ export class SpeechManager {
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: BlobPart[] = [];
   private isListeningActive = false;
+  private isStarting = false;
+  private startRequestId = 0;
   private isSpeakingActive = false;
   private isTranscribingActive = false;
   private currentMode: ListenMode = "push-to-talk";
@@ -337,18 +342,20 @@ export class SpeechManager {
    * Start Listening with Multi-Provider Capture and Pause Handling
    */
   public async startListening(options: SpeechListenOptions): Promise<void> {
-    if (this.isListeningActive) return;
+    if (this.isListeningActive || this.isStarting) return;
 
     // Fail-fast if neither Web Speech API nor Backend Whisper STT is available
     if (!this.recognition && this.activeProvider === "none") {
       this.setStatus("STT_CONFIGURATION_ERROR", "Speech transcription service is unavailable.");
       options.onError(
-        "Speech transcription service is unavailable: Web Speech API is not supported in this browser and backend Groq Whisper is not configured. Please use Chrome/Edge or configure GROQ_API_KEY in backend .env, Master.",
+        "Speech recognition is unavailable. Use a supported browser or configure the backend transcription service.",
         "STT_CONFIGURATION_ERROR"
       );
       return;
     }
 
+    this.isStarting = true;
+    const requestId = ++this.startRequestId;
     this.options = options;
     this.currentMode = options.mode || "push-to-talk";
     this.currentLang = options.lang || "en-US";
@@ -358,20 +365,27 @@ export class SpeechManager {
     this.startTime = performance.now();
     this.lastSpeechActivityTime = this.startTime;
     this.isTranscribingActive = false;
+    this.setVoiceState("REQUESTING_MICROPHONE");
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.isStarting = false;
+      this.setStatus("MIC_UNAVAILABLE", "Microphone access is not available in this browser context.");
+      this.setVoiceState("IDLE");
+      options.onError("Microphone access is not available in this browser or page context.", "MIC_UNAVAILABLE");
+      this.options = null;
+      return;
+    }
 
     // 1. Request microphone with studio audio constraints
-    const constraints: MediaStreamConstraints = {
-      audio: {
-        echoCancellation: { ideal: true },
-        noiseSuppression: { ideal: true },
-        autoGainControl: { ideal: true },
-        sampleRate: { ideal: 48000 },
-        channelCount: { ideal: 1 },
-      },
-    };
+    const constraints = createMicrophoneConstraints(options.deviceId);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (requestId !== this.startRequestId) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      this.isStarting = false;
       this.mediaStream = stream;
       this.isListeningActive = true;
       this.setVoiceState("LISTENING");
@@ -381,11 +395,11 @@ export class SpeechManager {
       aiVisualController.setState("listening");
 
       // 3. Start parallel MediaRecorder for high-fidelity Groq Whisper fallback
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      const mimeType = typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
+        : typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("audio/webm")
         ? "audio/webm"
-        : MediaRecorder.isTypeSupported("audio/ogg")
+        : typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("audio/ogg")
         ? "audio/ogg"
         : "";
 
@@ -408,26 +422,35 @@ export class SpeechManager {
         }
       }
     } catch (err) {
+      if (requestId !== this.startRequestId) return;
+      this.isStarting = false;
       this.cancelListening();
       if (err instanceof Error && err.name === "NotAllowedError") {
         this.setStatus("MIC_PERMISSION_REQUIRED", "Microphone access was denied.");
         options.onError(
-          "Microphone permission is required. Please enable microphone access in your browser settings, Master.",
+          "Microphone permission was denied. Allow microphone access in browser settings to use voice input.",
           "MIC_PERMISSION_REQUIRED"
         );
       } else if (err instanceof Error && err.name === "NotFoundError") {
         this.setStatus("MIC_UNAVAILABLE", "No microphone hardware detected.");
         options.onError(
-          "No microphone hardware was detected on your device, Master.",
+          "No microphone was detected. Connect one or continue with text chat.",
+          "MIC_UNAVAILABLE"
+        );
+      } else if (err instanceof Error && err.name === "OverconstrainedError") {
+        this.setStatus("MIC_UNAVAILABLE", "The selected microphone is unavailable.");
+        options.onError(
+          "The selected microphone is unavailable. Choose another input device in Settings.",
           "MIC_UNAVAILABLE"
         );
       } else {
         this.setStatus("STT_SERVER_ERROR", "Could not initialize microphone stream.");
         options.onError(
-          "Could not initialize microphone stream. Please verify your audio configuration, Master.",
+          "Could not start microphone capture. Check browser permissions and audio settings.",
           "STT_SERVER_ERROR"
         );
       }
+      this.options = null;
     }
   }
 
@@ -435,6 +458,10 @@ export class SpeechManager {
    * Stop Listening and finalize complete speech capture
    */
   public async stopListening(): Promise<void> {
+    if (this.isStarting && !this.isListeningActive) {
+      this.cancelListening();
+      return;
+    }
     if (!this.isListeningActive) return;
     this.isListeningActive = false;
     this.clearPauseTimers();
@@ -452,14 +479,19 @@ export class SpeechManager {
       }
     }
 
-    // Stop MediaStream tracks
+    const recorderMimeType = this.mediaRecorder?.mimeType;
+    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
+      const recorder = this.mediaRecorder;
+      await new Promise<void>((resolve) => {
+        recorder.addEventListener("stop", () => resolve(), { once: true });
+        recorder.stop();
+      });
+    }
+    this.mediaRecorder = null;
+
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
       this.mediaStream = null;
-    }
-
-    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
-      this.mediaRecorder.stop();
     }
 
     const duration = performance.now() - this.startTime;
@@ -467,7 +499,8 @@ export class SpeechManager {
 
     if (duration < SpeechManager.MIN_SPEECH_DURATION_MS && !webSpeechTranscript) {
       this.setVoiceState("IDLE");
-      this.options?.onError("Voice input was too brief. Speak your command clearly, Master.", "STT_READY");
+      this.options?.onError("Voice input was too brief. Please speak a little longer.", "STT_READY");
+      this.options = null;
       return;
     }
 
@@ -476,7 +509,9 @@ export class SpeechManager {
       this.retryCount = 0;
       this.setStatus("STT_READY");
       this.setVoiceState("UNDERSTANDING");
-      this.options?.onFinalTranscript(webSpeechTranscript);
+      const onFinalTranscript = this.options?.onFinalTranscript;
+      this.options = null;
+      onFinalTranscript?.(webSpeechTranscript);
       return;
     }
 
@@ -485,7 +520,7 @@ export class SpeechManager {
       this.setVoiceState("TRANSCRIBING");
       try {
         const audioBlob = new Blob(this.recordedChunks, {
-          type: this.mediaRecorder?.mimeType || "audio/webm",
+          type: recorderMimeType || "audio/webm",
         });
 
         const whisperTranscript = await transcribeRecording(audioBlob);
@@ -493,24 +528,28 @@ export class SpeechManager {
           this.retryCount = 0;
           this.setStatus("STT_READY");
           this.setVoiceState("UNDERSTANDING");
-          this.options?.onFinalTranscript(whisperTranscript.trim());
+          const onFinalTranscript = this.options?.onFinalTranscript;
+          this.options = null;
+          onFinalTranscript?.(whisperTranscript.trim());
           return;
         }
 
         this.setVoiceState("IDLE");
         this.options?.onError(
-          "No distinct speech was detected. Please speak clearly into your microphone, Master.",
+          "No speech was detected. Please speak clearly into your microphone.",
           "STT_READY"
         );
+        this.options = null;
       } catch (err) {
         this.handleTranscriptionFailure(err);
       }
     } else {
       this.setVoiceState("IDLE");
       this.options?.onError(
-        "No audio signal was captured. Please check your microphone connection, Master.",
+        "No audio was captured. Check the microphone connection and try again.",
         "MIC_UNAVAILABLE"
       );
+      this.options = null;
     }
   }
 
@@ -539,6 +578,8 @@ export class SpeechManager {
   }
 
   public cancelListening(): void {
+    this.startRequestId++;
+    this.isStarting = false;
     this.isListeningActive = false;
     this.clearPauseTimers();
     aiVisualController.disconnectMic();
@@ -556,9 +597,12 @@ export class SpeechManager {
       this.mediaStream = null;
     }
     if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
+      this.mediaRecorder.ondataavailable = null;
       this.mediaRecorder.stop();
     }
+    this.mediaRecorder = null;
     this.recordedChunks = [];
+    this.options = null;
   }
 
   // ==========================================
@@ -604,29 +648,30 @@ export class SpeechManager {
   private handleTranscriptionFailure(err: unknown): void {
     const errMsg = err instanceof Error ? err.message : String(err);
     let code: STTStatus = "STT_SERVER_ERROR";
-    let userMsg = "I encountered difficulty with the speech transcription service. Reconnecting now, Master.";
+    let userMsg = "Speech recognition encountered a problem. Check the connection and try again.";
 
     if (errMsg.includes("STT_AUTH_ERROR") || errMsg.includes("Groq API key is not configured")) {
       code = "STT_AUTH_ERROR";
-      userMsg = "Speech transcription service is unavailable: Groq API key is not configured in backend .env. Please configure GROQ_API_KEY for Whisper transcription, or use a browser with built-in Speech Recognition (Chrome/Edge), Master.";
+      userMsg = "Speech transcription is not configured. Use browser speech recognition or configure the backend transcription service.";
     } else if (errMsg.includes("STT_RATE_LIMITED")) {
       code = "STT_RATE_LIMITED";
-      userMsg = "Speech service is temporarily rate-limited. Retrying automatically in a moment, Master.";
+      userMsg = "Speech recognition is temporarily rate-limited. Please try again shortly.";
     } else if (errMsg.includes("STT_TIMEOUT")) {
       code = "STT_TIMEOUT";
-      userMsg = "Speech service request timed out. Please repeat your command, Master.";
+      userMsg = "Speech recognition timed out. Please repeat your command.";
     } else if (errMsg.includes("STT_NETWORK_ERROR") || !navigator.onLine) {
       code = "STT_NETWORK_ERROR";
-      userMsg = "Network connection is offline. Speech recognition will resume once online, Master.";
+      userMsg = "The network is offline. Speech recognition can resume when connectivity returns.";
     } else if (errMsg.includes("503") || errMsg.includes("unavailable")) {
       code = "STT_SERVER_ERROR";
-      userMsg = "Speech transcription service is temporarily unavailable. Please check backend connectivity or use text chat, Master.";
+      userMsg = "Speech transcription is temporarily unavailable. Check the backend connection or use text chat.";
     }
 
     this.setStatus(code, errMsg);
     this.setVoiceState("ERROR_RECOVERY");
     this.scheduleRetry();
     this.options?.onError(userMsg, code);
+    this.options = null;
   }
 
   private scheduleRetry(): void {

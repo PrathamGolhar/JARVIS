@@ -56,9 +56,12 @@ def test_workflow_web_research_tool_execution():
 # Workflow 4 & 5: Document Upload, Indexing, and RAG Retrieval
 # -------------------------------------------------------------------------
 def test_workflow_document_upload_and_rag(tmp_path: Path):
+    session_id = str(uuid4())
+    registered = client.post("/api/sessions", json={"sessionId": session_id})
+    assert registered.status_code == 200
     file_content = b"Technical Whitepaper: System architecture uses SQLite WAL mode for fast concurrency."
     response = client.post(
-        "/api/files/upload?session_id=sess_upload_test",
+        f"/api/files/upload?session_id={session_id}",
         files={"file": ("whitepaper.txt", io.BytesIO(file_content), "text/plain")},
     )
     assert response.status_code == 200
@@ -67,9 +70,14 @@ def test_workflow_document_upload_and_rag(tmp_path: Path):
     file_id = upload_data["fileId"]
 
     # Query RAG store scoped to the session
-    matches = rag_store.search("concurrency WAL mode", session_id="sess_upload_test")
+    matches = rag_store.search("concurrency WAL mode", session_id=session_id)
     assert len(matches) > 0
     assert "whitepaper.txt" in matches[0]["filename"]
+    stored_name = f"{file_id}_whitepaper.txt"
+    deleted = client.delete(f"/api/files/{stored_name}")
+    assert deleted.status_code == 200
+    assert rag_store.search("concurrency WAL mode", session_id=session_id) == []
+    assert client.delete(f"/api/sessions/{session_id}").status_code == 200
 
 
 # -------------------------------------------------------------------------

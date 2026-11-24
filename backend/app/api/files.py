@@ -1,19 +1,21 @@
 from datetime import datetime
 import mimetypes
 from pathlib import Path
+import re
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
 from app.schemas import FileUploadResponse, GeneratedFileItem
-from app.services.auth import require_auth
+from app.services.auth import require_principal
 from app.services.file_processing.extractor import extract_file_text_and_meta
 from app.services.memory import memory_store
 from app.services.memory.vector_store import rag_store
+from app.services.projects.manager import project_manager
 from app.settings import settings
 
-router = APIRouter(prefix="/api/files", tags=["files"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/files", tags=["files"], dependencies=[Depends(require_principal)])
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50MB
 ALLOWED_UPLOAD_EXTS = {
@@ -28,6 +30,8 @@ FORBIDDEN_PATTERNS = {".env", ".git", ".db", ".sqlite", ".pem", ".key"}
 async def upload_document(
     file: UploadFile = File(...),
     session_id: str | None = None,
+    project_id: str | None = None,
+    owner_id: str = Depends(require_principal),
 ) -> FileUploadResponse:
     """
     Universal document upload & extraction with RAG semantic indexing.
@@ -56,13 +60,18 @@ async def upload_document(
             detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(ALLOWED_UPLOAD_EXTS))}",
         )
 
+    if project_id and not project_manager.get_project(project_id, owner_id=owner_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    if session_id and not memory_store.ensure_session_owner(session_id, owner_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation session not found.")
+
     content_bytes = await file.read()
     if not content_bytes:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Uploaded file is empty.")
     if len(content_bytes) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File exceeds 50MB limit.")
 
-    file_id = uuid4().hex[:8]
+    file_id = uuid4().hex
     safe_filename = f"{file_id}_{safe_base}"
     dest_path = (settings.uploads_dir / safe_filename).resolve()
 
@@ -73,27 +82,27 @@ async def upload_document(
         f.write(content_bytes)
 
     # Extract text & metadata
-    extracted = extract_file_text_and_meta(dest_path)
+    try:
+        extracted = extract_file_text_and_meta(dest_path)
+    except Exception as exc:
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unable to extract uploaded file '{safe_base}'.",
+        ) from exc
     text = extracted["text"]
     total_units = extracted["total_units"]
     topics = extracted["topics"]
 
     # Index into persistent RAG store for instant semantic search with session isolation
-    if text.strip():
-        rag_store.chunk_and_index(
-            file_id=file_id,
-            filename=safe_base,
-            full_text=text,
-            session_id=session_id,
-        )
-
-    # Inform conversation session memory
-    if session_id:
-        memory_store.append_message(
-            session_id,
-            "system",
-            f"[Master uploaded '{safe_base}' ({total_units} pages/units)] Extract snippet:\n{text[:1200]}",
-        )
+    rag_store.chunk_and_index(
+        file_id=file_id,
+        filename=safe_base,
+        full_text=text,
+        session_id=session_id,
+        owner_id=owner_id,
+        project_id=project_id,
+    )
 
     preview = text[:400].strip() + ("..." if len(text) > 400 else "")
 
@@ -111,11 +120,14 @@ async def upload_document(
 
 
 @router.get("/generated", response_model=list[GeneratedFileItem])
-async def list_generated_files() -> list[GeneratedFileItem]:
+async def list_generated_files(owner_id: str = Depends(require_principal)) -> list[GeneratedFileItem]:
     """Return all generated documents (PDF, PPTX, DOCX, XLSX)."""
     files = []
     for p in settings.generated_dir.glob("*.*"):
         if p.is_file():
+            if not memory_store.artifact_belongs_to(p.name, owner_id):
+                if owner_id != memory_store.legacy_owner_id or not memory_store.register_artifact(p.name, owner_id):
+                    continue
             stat = p.stat()
             dt = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
             files.append(
@@ -134,7 +146,7 @@ async def list_generated_files() -> list[GeneratedFileItem]:
 
 
 @router.get("/download/{filename}")
-async def download_file(filename: str):
+async def download_file(filename: str, owner_id: str = Depends(require_principal)):
     """
     Download a file from generated/ or uploads/ directory with strict path traversal & symlink protection.
     """
@@ -164,6 +176,13 @@ async def download_file(filename: str):
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{safe_name}' not found.")
 
+    if target.parent == gen_root and not _ensure_generated_file_owner(safe_name, owner_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found.")
+    if target.parent == up_root:
+        file_id = _uploaded_file_id(safe_name)
+        if not file_id or not rag_store.get_document(file_id, owner_id=owner_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found.")
+
     mime_type, _ = mimetypes.guess_type(str(target))
     return FileResponse(
         path=str(target),
@@ -173,7 +192,7 @@ async def download_file(filename: str):
 
 
 @router.delete("/{filename}")
-async def delete_file(filename: str):
+async def delete_file(filename: str, owner_id: str = Depends(require_principal)):
     """
     Delete a file from generated/ or uploads/ with permission enforcement and path traversal protection.
     """
@@ -209,5 +228,27 @@ async def delete_file(filename: str):
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File '{safe_name}' not found.")
 
+    if target.parent == gen_root and not _ensure_generated_file_owner(safe_name, owner_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found.")
+    if target.parent == up_root:
+        file_id = _uploaded_file_id(safe_name)
+        if not file_id or not rag_store.get_document(file_id, owner_id=owner_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found.")
+        if not rag_store.delete_document(file_id, owner_id=owner_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found.")
+
     target.unlink()
+    if target.parent == gen_root:
+        memory_store.delete_artifact(safe_name, owner_id)
     return {"ok": True, "message": f"File '{safe_name}' deleted successfully."}
+
+
+def _uploaded_file_id(filename: str) -> str | None:
+    match = re.match(r"^([0-9a-f]{8}|[0-9a-f]{32})(?:_|$)", filename, flags=re.IGNORECASE)
+    return match.group(1).lower() if match else None
+
+
+def _ensure_generated_file_owner(filename: str, owner_id: str) -> bool:
+    if memory_store.artifact_belongs_to(filename, owner_id):
+        return True
+    return owner_id == memory_store.legacy_owner_id and memory_store.register_artifact(filename, owner_id)

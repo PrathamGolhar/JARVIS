@@ -21,6 +21,7 @@ from app.api.memory import router as memory_router
 from app.api.projects import router as projects_router
 from app.api.research import router as research_router
 from app.api.settings_api import router as settings_router
+from app.api.sessions import router as sessions_router
 from app.api.speech import router as speech_router
 from app.api.study import router as study_router
 from app.api.web_actions import router as web_actions_router
@@ -133,6 +134,7 @@ app.include_router(research_router)
 app.include_router(coding_router)
 app.include_router(projects_router)
 app.include_router(memory_router)
+app.include_router(sessions_router)
 app.include_router(automation_router)
 app.include_router(settings_router)
 app.include_router(diagnostics_router)

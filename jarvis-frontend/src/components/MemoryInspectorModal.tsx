@@ -9,7 +9,7 @@ export function MemoryInspectorModal({ onClose }: MemoryInspectorModalProps) {
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
-  const [newCat, setNewCat] = useState("general");
+  const [newCat, setNewCat] = useState("preference");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -32,7 +32,10 @@ export function MemoryInspectorModal({ onClose }: MemoryInspectorModalProps) {
   const handleAdd = async () => {
     if (!newKey.trim() || !newVal.trim()) return;
     try {
-      await setMemory(newKey, newVal, newCat);
+      const saved = await setMemory(newKey, newVal, newCat);
+      if (saved.conflict) {
+        alert("This replaced a different value previously stored for the same memory key.");
+      }
       setNewKey("");
       setNewVal("");
       await refreshMemories();
@@ -167,8 +170,12 @@ export function MemoryInspectorModal({ onClose }: MemoryInspectorModalProps) {
                   <span style={{ fontSize: "10px", padding: "2px 6px", background: "rgba(255, 255, 255, 0.08)", borderRadius: "4px", color: "#94a3b8" }}>
                     {m.category}
                   </span>
+                  <span style={{ fontSize: "10px", color: "#64748b" }}>
+                    {m.provenance.replaceAll("_", " ")}
+                  </span>
                 </div>
                 <p style={{ margin: "4px 0 0 0", fontSize: "12.5px", color: "#e2e8f0" }}>{m.value}</p>
+                {m.source && <small style={{ color: "#64748b" }}>Source: {m.source}</small>}
               </div>
 
               <button

@@ -3,11 +3,12 @@ import { uploadDocument } from "../api/files";
 
 type FileUploadDrawerProps = {
   sessionId: string;
+  projectId?: string;
   onUploadSuccess: (filename: string, preview: string) => void;
   onError: (error: string) => void;
 };
 
-export function FileUploadDrawer({ sessionId, onUploadSuccess, onError }: FileUploadDrawerProps) {
+export function FileUploadDrawer({ sessionId, projectId, onUploadSuccess, onError }: FileUploadDrawerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -17,7 +18,7 @@ export function FileUploadDrawer({ sessionId, onUploadSuccess, onError }: FileUp
 
     setIsUploading(true);
     try {
-      const result = await uploadDocument(file, sessionId);
+      const result = await uploadDocument(file, sessionId, projectId);
       onUploadSuccess(result.filename, result.extractedTextPreview);
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to upload document.");

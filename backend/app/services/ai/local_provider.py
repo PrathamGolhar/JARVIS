@@ -31,6 +31,17 @@ class LocalProvider(AIProvider):
                 break
 
         low = user_message.lower().strip()
+        system_prompt = next(
+            (str(message.get("content", "")) for message in messages if message.get("role") == "system"),
+            "",
+        )
+        response_style = (
+            "concise"
+            if "Prefer brief, direct answers" in system_prompt
+            else "detailed"
+            if "Explain the reasoning and relevant details" in system_prompt
+            else "balanced"
+        )
 
         # Check if the message history contains tool results to synthesize
         tool_results = [m for m in messages if m.get("role") == "tool"]
@@ -46,15 +57,17 @@ class LocalProvider(AIProvider):
             if tool_name == "web_search":
                 if data.get("ok") and data.get("results"):
                     results = data["results"]
-                    lines = ["Master, here is the verified intelligence retrieved from live web research:"]
-                    for idx, r in enumerate(results[:5], start=1):
+                    lines = ["Verified results from live web research:"]
+                    result_limit = 3 if response_style == "concise" else 5
+                    for idx, r in enumerate(results[:result_limit], start=1):
                         title = r.get("title", "Source")
                         url = r.get("url", "")
                         snippet = r.get("snippet", "").strip()
                         domain = r.get("domain", "")
                         source_label = f" *({domain})*" if domain else ""
                         lines.append(f"{idx}. **{title}**{source_label}\n   {snippet}\n   Source: {url}")
-                    lines.append("All data points have been grounded with live search citations.")
+                    if response_style != "concise":
+                        lines.append("The results are grounded in the cited sources.")
                     reply = "\n\n".join(lines)
                 else:
                     reply = (
@@ -70,8 +83,14 @@ class LocalProvider(AIProvider):
 
             if tool_name == "calculator":
                 val = data.get("result") or data.get("value") or data.get("expression")
+                expression = data.get("expression")
+                reply = (
+                    f"The result of {expression} is **{val}**."
+                    if response_style == "detailed" and expression
+                    else f"Result: **{val}**."
+                )
                 return AIChatResponse(
-                    content=f"Master, the calculated result is **{val}**.",
+                    content=reply,
                     tool_calls=[],
                     model="local-rule-engine",
                     provider=self.name,
@@ -82,14 +101,19 @@ class LocalProvider(AIProvider):
                     loc = data.get("location", "the requested area")
                     temp = data.get("temperature", "N/A")
                     cond = data.get("conditions", "Clear")
+                    reply = (
+                        f"Current weather in {loc}: {temp}°C, {cond}."
+                        if response_style == "concise"
+                        else f"Current conditions in {loc} are {temp}°C with {cond}."
+                    )
                     return AIChatResponse(
-                        content=f"Master, current weather in {loc} is {temp}°C with {cond}.",
+                        content=reply,
                         tool_calls=[],
                         model="local-rule-engine",
                         provider=self.name,
                     )
                 return AIChatResponse(
-                    content="Master, live weather service is temporarily unavailable.",
+                    content="The live weather service is temporarily unavailable.",
                     tool_calls=[],
                     model="local-rule-engine",
                     provider=self.name,
@@ -97,7 +121,7 @@ class LocalProvider(AIProvider):
 
             if tool_name == "system_diagnostics":
                 return AIChatResponse(
-                    content="Master, telemetry confirms hardware subsystems are operating within nominal parameters.",
+                    content="System telemetry reports nominal hardware status.",
                     tool_calls=[],
                     model="local-rule-engine",
                     provider=self.name,
@@ -105,7 +129,7 @@ class LocalProvider(AIProvider):
 
             msg = data.get("message") or f"Executed tool '{tool_name}' successfully."
             return AIChatResponse(
-                content=f"Master, {msg}",
+                content=str(msg),
                 tool_calls=[],
                 model="local-rule-engine",
                 provider=self.name,
@@ -171,11 +195,11 @@ class LocalProvider(AIProvider):
 
         # Fallback conversational responses
         if any(w in low for w in ["hello", "hi", "hey", "greetings", "jarvis"]):
-            reply = "Greetings, Master! All offline core systems are operating at peak efficiency. It is an absolute pleasure to serve you today. How may I assist?"
+            reply = "Hello. Offline systems are ready. What would you like to work on?"
         elif "thank" in low:
-            reply = "Always an honor to serve you, Master. Let me know what else you require."
+            reply = "You're welcome."
         else:
-            reply = f"Master, I have received your command regarding '{user_message[:50]}...'. All offline subsystems stand ready to execute."
+            reply = f"I received your request about '{user_message[:50]}'. The local assistant is ready to help."
 
         return AIChatResponse(
             content=reply,

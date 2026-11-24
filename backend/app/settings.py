@@ -138,6 +138,24 @@ class Settings:
         default_factory=lambda: _get_first_env("JARVIS_PERMISSION_MODE", "JARVIS_SAFETY_TIER", default="assisted").lower()
     )
     max_tool_iterations: int = 8
+    tool_concurrency: int = field(
+        default_factory=lambda: max(1, int(_get_first_env("JARVIS_TOOL_CONCURRENCY", default="4")))
+    )
+    provider_timeout_seconds: float = field(
+        default_factory=lambda: max(1.0, float(_get_first_env("JARVIS_PROVIDER_TIMEOUT_SECONDS", default="90")))
+    )
+    chat_token_budgets: dict[str, int] = field(
+        default_factory=lambda: {
+            "simple_conversation": max(128, int(_get_first_env("JARVIS_TOKENS_SIMPLE", default="384"))),
+            "deep_reasoning": max(256, int(_get_first_env("JARVIS_TOKENS_REASONING", default="2048"))),
+            "vision_multimodal": max(256, int(_get_first_env("JARVIS_TOKENS_VISION", default="2048"))),
+            "coding_and_syntax": max(256, int(_get_first_env("JARVIS_TOKENS_CODING", default="2048"))),
+            "document_synthesis": max(256, int(_get_first_env("JARVIS_TOKENS_DOCUMENT", default="2048"))),
+            "mathematics_compute": max(256, int(_get_first_env("JARVIS_TOKENS_MATH", default="1024"))),
+            "research_analysis": max(256, int(_get_first_env("JARVIS_TOKENS_RESEARCH", default="2048"))),
+            "offline_local": max(128, int(_get_first_env("JARVIS_TOKENS_LOCAL", default="1024"))),
+        }
+    )
     sandbox_timeout_seconds: int = field(
         default_factory=lambda: int(_get_first_env("JARVIS_SANDBOX_TIMEOUT", default="15"))
     )

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { AssistantMode, Citation, GeneratedFile, PendingAction, PlanStep, sendChatMessage, ToolEvent } from "./api/chat";
+import { AssistantMode, Citation, GeneratedFile, PendingAction, PlanStep, ResponseStyle, sendChatMessage, ToolEvent } from "./api/chat";
+import { fetchSessionHistory, registerSession, resetSessionHistory } from "./api/sessions";
 import { fetchVoices, requestSpeech, Voice } from "./api/speech";
 import { fetchDiagnostics, DiagnosticItem, SystemMetrics } from "./api/diagnostics";
 import { waitForBackend } from "./api/system";
@@ -35,12 +36,20 @@ import backgroundVideo from "./assets/Futuristic,_cinematic_AI_interface_featuri
 import { aiVisualController, AssistantState } from "./services/aiVisualController";
 import { speechManager, VoiceState } from "./services/speechManager";
 import { permissionManager } from "./services/permissionManager";
+import {
+  extractWakeWordCommand,
+  readBooleanPreference,
+  readResponseStyle,
+  readStringPreference,
+  savePreference,
+} from "./services/voicePreferences";
 
 type Message = {
   author: "user" | "jarvis";
   text: string;
   citations?: Citation[];
   planSteps?: PlanStep[];
+  executionStatus?: "success" | "partial_success" | "failure" | "unverified";
   generatedFiles?: GeneratedFile[];
   codeBlocks?: { code: string; language: string }[];
   id: string;
@@ -52,10 +61,26 @@ function copyToClipboard(text: string) {
   });
 }
 
+function getConversationSessionId(): string {
+  try {
+    const stored = window.localStorage.getItem("jarvis_conversation_id");
+    if (stored && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(stored)) {
+      return stored;
+    }
+    const id = crypto.randomUUID();
+    window.localStorage.setItem("jarvis_conversation_id", id);
+    return id;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
 export function App() {
-  const sessionId = useRef(crypto.randomUUID());
+  const [sessionId, setSessionId] = useState(getConversationSessionId);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const speechPlaybackGenerationRef = useRef(0);
+  const voiceSessionActiveRef = useRef(false);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const autoListenTimerRef = useRef<number | null>(null);
 
@@ -72,15 +97,18 @@ export function App() {
   const [voiceEngineState, setVoiceEngineState] = useState<VoiceState>("IDLE");
   const [interimTranscript, setInterimTranscript] = useState("");
   const [finalTranscript, setFinalTranscript] = useState("");
-  const [continuousMode, setContinuousMode] = useState(true);
-  const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
+  const [continuousMode, setContinuousMode] = useState(() => readBooleanPreference("jarvis_continuous_mode", true));
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(() => readBooleanPreference("jarvis_wake_word_enabled", true));
   const [activeTool, setActiveTool] = useState<string | undefined>();
   const [recentTools, setRecentTools] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [voices, setVoices] = useState<Voice[]>([]);
-  const [voiceId, setVoiceId] = useState("en-US-GuyNeural");
+  const [voiceId, setVoiceId] = useState(() => readStringPreference("jarvis_voice_id", "en-US-GuyNeural"));
+  const [microphoneDeviceId, setMicrophoneDeviceId] = useState(() => readStringPreference("jarvis_microphone_device_id", ""));
+  const [responseStyle, setResponseStyle] = useState<ResponseStyle>(readResponseStyle);
 
   const [backendStarting, setBackendStarting] = useState(true);
+  const [backendAvailable, setBackendAvailable] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [diagnosticsItems, setDiagnosticsItems] = useState<DiagnosticItem[]>([]);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | undefined>();
@@ -95,6 +123,57 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDevDiagnosticsOpen, setIsDevDiagnosticsOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+
+  function updatePreference(key: string, value: string, update: () => void) {
+    try {
+      savePreference(key, value);
+      update();
+      setError("");
+    } catch (preferenceError) {
+      showToast({
+        title: "Preference not saved",
+        message: preferenceError instanceof Error ? preferenceError.message : "Browser storage is unavailable.",
+        type: "error",
+      });
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        let activeSessionId = sessionId;
+        if (!(await registerSession(activeSessionId))) {
+          activeSessionId = crypto.randomUUID();
+          setSessionId(activeSessionId);
+          try {
+            window.localStorage.setItem("jarvis_conversation_id", activeSessionId);
+          } catch {
+            // The session remains usable when browser storage is disabled.
+          }
+          await registerSession(activeSessionId);
+        }
+        const history = await fetchSessionHistory(activeSessionId);
+        if (cancelled) return;
+        setMessages(
+          history
+            .filter((message) => message.role === "user" || message.role === "assistant")
+            .map((message) => ({
+              author: message.role === "user" ? "user" as const : "jarvis" as const,
+              text: message.content,
+              id: crypto.randomUUID(),
+            }))
+        );
+      } catch (sessionError) {
+        if (!cancelled) {
+          setError(sessionError instanceof Error ? sessionError.message : "Unable to restore the conversation.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   // Global Ctrl+K Command Palette hotkey
   useEffect(() => {
@@ -188,8 +267,10 @@ export function App() {
       const healthy = await waitForBackend();
       if (cancelled) return;
       setBackendStarting(false);
+      setBackendAvailable(healthy);
       if (!healthy) {
         setError("JARVIS backend is offline. Verify Python server is running on port 8765.");
+        setStatus("error");
         showToast({
           title: "Core Disconnected",
           message: "Could not reach FastAPI backend on port 8765.",
@@ -211,9 +292,11 @@ export function App() {
       try {
         const items = await fetchVoices();
         if (cancelled) return;
-        setVoices(items);
-        if (!items.some((item) => item.id === voiceId)) {
-          setVoiceId(items[0]?.id ?? voiceId);
+        const englishVoices = items.filter((item) => item.id.toLowerCase().startsWith("en-"));
+        setVoices(englishVoices);
+        if (!englishVoices.some((item) => item.id === voiceId)) {
+          const defaultVoice = englishVoices[0]?.id ?? "en-US-GuyNeural";
+          updatePreference("jarvis_voice_id", defaultVoice, () => setVoiceId(defaultVoice));
         }
       } catch {
         if (!cancelled) setError("Edge voice synthesis unavailable. Text interaction is online.");
@@ -242,6 +325,7 @@ export function App() {
   useEffect(() => () => {
     stopSpeech();
     speechManager.cancelListening();
+    voiceSessionActiveRef.current = false;
     if (autoListenTimerRef.current !== null) {
       clearTimeout(autoListenTimerRef.current);
     }
@@ -254,12 +338,16 @@ export function App() {
   }, [messages, status, pendingAction, interimTranscript]);
 
   function stopSpeech() {
+    speechPlaybackGenerationRef.current += 1;
     aiVisualController.stopSpeechSimulation();
     aiVisualController.disconnectTTS();
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      audioRef.current = null;
+    const audio = audioRef.current;
+    audioRef.current = null;
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      audio.pause();
+      audio.currentTime = 0;
     }
     if (audioUrlRef.current) {
       URL.revokeObjectURL(audioUrlRef.current);
@@ -269,16 +357,29 @@ export function App() {
       clearTimeout(autoListenTimerRef.current);
       autoListenTimerRef.current = null;
     }
+    window.speechSynthesis?.cancel();
+  }
+
+  function scheduleAutoListen() {
+    if (!continuousMode || !voiceSessionActiveRef.current) return;
+    if (autoListenTimerRef.current !== null) clearTimeout(autoListenTimerRef.current);
+    autoListenTimerRef.current = window.setTimeout(() => {
+      autoListenTimerRef.current = null;
+      void startListening();
+    }, 450);
   }
 
   async function playSpeech(text: string) {
     stopSpeech();
+    const playbackGeneration = speechPlaybackGenerationRef.current;
     // Clean markdown code blocks from speech output
     const cleanSpokenText = text.replace(/```[\s\S]*?```/g, "Code block provided in terminal.").replace(/[#*`_]/g, "");
 
     // 1. Primary: Edge TTS via backend
     try {
-      const url = URL.createObjectURL(await requestSpeech(cleanSpokenText, voiceId));
+      const speechBlob = await requestSpeech(cleanSpokenText, voiceId);
+      if (playbackGeneration !== speechPlaybackGenerationRef.current) return;
+      const url = URL.createObjectURL(speechBlob);
       const audio = new Audio(url);
       audio.crossOrigin = "anonymous";
 
@@ -287,24 +388,23 @@ export function App() {
       audioUrlRef.current = url;
 
       audio.onended = () => {
+        if (playbackGeneration !== speechPlaybackGenerationRef.current) return;
         if (audioUrlRef.current === url) URL.revokeObjectURL(url);
+        audioUrlRef.current = null;
+        audioRef.current = null;
         aiVisualController.disconnectTTS();
         setStatus("idle");
         speechManager.setVoiceState("IDLE");
-
-        if (continuousMode) {
-          autoListenTimerRef.current = window.setTimeout(() => {
-            autoListenTimerRef.current = null;
-            void startListening();
-          }, 450);
-        }
+        scheduleAutoListen();
       };
 
       await audio.play();
+      if (playbackGeneration !== speechPlaybackGenerationRef.current) return;
       setStatus("speaking");
       speechManager.setVoiceState("SPEAKING");
       return;
     } catch (ttsErr) {
+      if (playbackGeneration !== speechPlaybackGenerationRef.current) return;
       console.warn("[JARVIS TTS] Edge TTS unavailable, falling back to browser SpeechSynthesis:", ttsErr);
     }
 
@@ -313,34 +413,37 @@ export function App() {
       try {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(cleanSpokenText);
+        utterance.lang = "en-US";
         utterance.onend = () => {
+          if (playbackGeneration !== speechPlaybackGenerationRef.current) return;
           setStatus("idle");
           speechManager.setVoiceState("IDLE");
-          if (continuousMode) {
-            autoListenTimerRef.current = window.setTimeout(() => {
-              autoListenTimerRef.current = null;
-              void startListening();
-            }, 450);
-          }
+          scheduleAutoListen();
         };
         utterance.onerror = (e) => {
+          if (playbackGeneration !== speechPlaybackGenerationRef.current) return;
           console.warn("[JARVIS TTS] Browser SpeechSynthesis error:", e);
+          voiceSessionActiveRef.current = false;
           setStatus("idle");
           speechManager.setVoiceState("IDLE");
         };
 
         window.speechSynthesis.speak(utterance);
+        if (playbackGeneration !== speechPlaybackGenerationRef.current) return;
         setStatus("speaking");
         speechManager.setVoiceState("SPEAKING");
         return;
       } catch (synthErr) {
+        if (playbackGeneration !== speechPlaybackGenerationRef.current) return;
         console.warn("[JARVIS TTS] Browser SpeechSynthesis failed:", synthErr);
       }
     }
 
     // 3. Graceful fallback state: text remains fully readable; do not crash or turn UI red
+    if (playbackGeneration !== speechPlaybackGenerationRef.current) return;
     setStatus("idle");
     speechManager.setVoiceState("IDLE");
+    voiceSessionActiveRef.current = false;
     showToast({
       title: "Voice Output Degraded",
       message: "Voice output unavailable; text response is still available.",
@@ -361,7 +464,22 @@ export function App() {
     return blocks;
   }
 
-  async function askJarvis(text: string, confirmedActionId?: string) {
+  async function handleResetConversation() {
+    try {
+      await resetSessionHistory(sessionId);
+      setMessages([]);
+      setError("");
+      showToast({ title: "Conversation reset", message: "This conversation's history was cleared.", type: "info" });
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : "Unable to reset the conversation.");
+    }
+  }
+
+  async function askJarvis(text: string, confirmedActionId?: string, isVoiceRequest = false) {
+    if (!isVoiceRequest && speechManager.isListening()) {
+      voiceSessionActiveRef.current = false;
+      speechManager.cancelListening();
+    }
     stopSpeech();
     setInterimTranscript("");
     setFinalTranscript(text);
@@ -378,25 +496,22 @@ export function App() {
 
     try {
       const result = await sendChatMessage({
-        sessionId: sessionId.current,
+        sessionId,
         text,
         mode: activeMode,
+        responseStyle,
         projectId: activeProjectId,
         confirmedActionId,
       });
 
       if (result.toolEvents && result.toolEvents.length > 0) {
-        const toolsUsed = result.toolEvents.map((t: ToolEvent) => t.toolName);
-        setRecentTools((prev) => [...prev, ...toolsUsed]);
-
-        if (toolsUsed.includes("web_search") || toolsUsed.includes("read_webpage")) {
-          setStatus("searching");
-          setActiveTool("web_search");
-        } else {
-          setStatus("executing");
-          setActiveTool(toolsUsed[0]);
-        }
+        const reportedTools = result.toolEvents.map((tool: ToolEvent) =>
+          `${tool.status?.toUpperCase() ?? "REPORTED"}: ${tool.toolName}`
+        );
+        setRecentTools((prev) => [...prev, ...reportedTools]);
+        setActiveTool(undefined);
       } else {
+        setActiveTool(undefined);
         permissionManager.recordDiagnostic({ capability: "ai.response.generate", executionStatus: "SUCCESS" });
       }
 
@@ -409,6 +524,7 @@ export function App() {
           text: result.reply,
           citations: result.citations && result.citations.length > 0 ? result.citations : undefined,
           planSteps: result.planSteps && result.planSteps.length > 0 ? result.planSteps : undefined,
+          executionStatus: result.executionStatus,
           generatedFiles: result.generatedFiles && result.generatedFiles.length > 0 ? result.generatedFiles : undefined,
           codeBlocks: extractedCodes.length > 0 ? extractedCodes : undefined,
           id: crypto.randomUUID(),
@@ -417,7 +533,7 @@ export function App() {
 
       if (result.pendingAction) {
         setPendingAction(result.pendingAction);
-        setStatus("idle");
+        setStatus("confirmation");
         speechManager.setVoiceState("IDLE");
       } else {
         void playSpeech(result.reply);
@@ -426,6 +542,7 @@ export function App() {
       const msg = reason instanceof Error ? reason.message : "JARVIS could not process the request.";
       setError(msg);
       setStatus("error");
+      voiceSessionActiveRef.current = false;
       speechManager.setVoiceState("ERROR_RECOVERY");
       showToast({
         title: "Execution Error",
@@ -442,7 +559,7 @@ export function App() {
 
   function handleCancelAction() {
     setPendingAction(null);
-    const reply = "Action authorization cancelled, Master.";
+    const reply = "Action authorization cancelled.";
     setMessages((current) => [...current, { author: "jarvis", text: reply, id: crypto.randomUUID() }]);
     setStatus("idle");
     void playSpeech(reply);
@@ -461,20 +578,21 @@ export function App() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = input.trim();
-    if (!text || status === "thinking" || backendStarting) return;
+    if (!text || isBusy || backendStarting || pendingAction) return;
     setInput("");
     await askJarvis(text);
   }
 
   async function startListening() {
-    if (status === "thinking" || backendStarting) return;
+    if (isBusy || backendStarting) return;
     stopSpeech();
     setError("");
     setInterimTranscript("");
-    setStatus("listening");
+    setStatus("connecting");
 
     await speechManager.startListening({
       mode: continuousMode ? "continuous" : "push-to-talk",
+      deviceId: microphoneDeviceId || undefined,
       onSpeechStart: () => {
         stopSpeech();
       },
@@ -483,17 +601,75 @@ export function App() {
       },
       onFinalTranscript: (final) => {
         setInterimTranscript("");
-        void askJarvis(final);
+        const command = continuousMode && wakeWordEnabled
+          ? extractWakeWordCommand(final)
+          : final.trim();
+        if (command === null) {
+          setStatus("idle");
+          scheduleAutoListen();
+          return;
+        }
+        if (!command) {
+          setStatus("idle");
+          scheduleAutoListen();
+          return;
+        }
+        void askJarvis(command, undefined, true);
       },
       onError: (userMessage) => {
+        voiceSessionActiveRef.current = false;
         setInterimTranscript("");
         setError(userMessage);
         setStatus("error");
       },
       onStateChange: (state) => {
         setVoiceEngineState(state);
+        const assistantState: Partial<Record<VoiceState, AssistantState>> = {
+          REQUESTING_MICROPHONE: "connecting",
+          LISTENING: "listening",
+          VOICE_DETECTED: "listening",
+          TRANSCRIBING: "transcribing",
+          SHORT_PAUSE: "listening",
+          WAITING_FOR_END_OF_SPEECH: "listening",
+          FINALIZING_TRANSCRIPT: "transcribing",
+          UNDERSTANDING: "understanding",
+          PROCESSING: "thinking",
+          EXECUTING_ACTION: "executing",
+          GENERATING_RESPONSE: "thinking",
+          SPEAKING: "speaking",
+          RECONNECTING: "error",
+          ERROR_RECOVERY: "error",
+          INTERRUPTED: "idle",
+          IDLE: "idle",
+        };
+        const nextState = assistantState[state];
+        if (nextState) setStatus(nextState);
       },
     });
+  }
+
+  function toggleVoiceLink() {
+    if (status === "connecting") {
+      voiceSessionActiveRef.current = false;
+      speechManager.cancelListening();
+      setInterimTranscript("");
+      setStatus("idle");
+      return;
+    }
+    if (status === "listening") {
+      if (continuousMode) {
+        voiceSessionActiveRef.current = false;
+        speechManager.cancelListening();
+        setInterimTranscript("");
+        setStatus("idle");
+      } else {
+        finishListening();
+      }
+      return;
+    }
+    if (status === "speaking") stopSpeech();
+    voiceSessionActiveRef.current = continuousMode;
+    void startListening();
   }
 
   function finishListening() {
@@ -506,16 +682,26 @@ export function App() {
 
   const stateLabel = backendStarting
     ? "INITIALIZING JARVIS ORCHESTRATOR"
+    : status === "connecting"
+    ? "REQUESTING MICROPHONE ACCESS"
     : status === "listening"
-    ? "LISTENING / AUDIO VAD ACTIVE"
+    ? "VOICE INPUT ACTIVE"
+    : status === "transcribing"
+    ? "TRANSCRIBING VOICE INPUT"
+    : status === "understanding"
+    ? "UNDERSTANDING REQUEST"
     : status === "thinking"
-    ? "ORCHESTRATING AUTONOMOUS PLAN"
+    ? "PROCESSING REQUEST"
+    : status === "confirmation"
+    ? "WAITING FOR CONFIRMATION"
     : status === "searching"
-    ? "SEARCHING LIVE CITATIONS"
+    ? "SEARCHING SOURCES"
     : status === "executing"
-    ? "EXECUTING SYSTEM WORKFLOW"
+    ? "EXECUTING REQUESTED TOOLS"
     : status === "speaking"
     ? "SYNTHESIZING NEURAL SPEECH"
+    : status === "error"
+    ? "ATTENTION REQUIRED"
     : isAiFallback
     ? "JARVIS ONLINE (LOCAL FALLBACK)"
     : hasDegradedItems
@@ -523,7 +709,13 @@ export function App() {
     : "JARVIS ONLINE & READY";
 
   const recentCommands = messages.filter((message) => message.author === "user").map((message) => message.text).slice(-4).reverse();
-  const isBusy = status === "thinking" || status === "searching" || status === "executing" || backendStarting;
+  const isBusy =
+    status === "thinking" ||
+    status === "searching" ||
+    status === "executing" ||
+    status === "transcribing" ||
+    status === "understanding" ||
+    backendStarting;
 
   return (
     <main className="app-shell flex flex-col h-screen w-screen overflow-hidden select-none">
@@ -545,7 +737,7 @@ export function App() {
 
       {/* Top Futuristic Navigation Bar */}
       <TopNavigationBar
-        systemStatus={backendStarting ? "degraded" : hasDegradedItems ? "degraded" : "online"}
+        systemStatus={backendStarting ? "degraded" : !backendAvailable ? "offline" : hasDegradedItems ? "degraded" : "online"}
         activeMode={activeMode}
         onChangeMode={(m) => {
           setActiveMode(m);
@@ -608,17 +800,11 @@ export function App() {
 
               <div className="cc-core">
                 <OrbControl
-                  disabled={status === "thinking" || backendStarting}
+                  disabled={isBusy || Boolean(pendingAction)}
                   state={status}
-                  onStart={() => {
-                    if (status === "speaking") stopSpeech();
-                    void startListening();
-                  }}
-                  onStop={() => {
-                    if (!continuousMode) finishListening();
-                  }}
+                  onActivate={toggleVoiceLink}
                 />
-                <p className="cc-core-status">{stateLabel}</p>
+                <p className="cc-core-status" role="status" aria-live="polite">{stateLabel}</p>
               </div>
 
               {!isFocusMode && (
@@ -637,11 +823,24 @@ export function App() {
                     <button
                       type="button"
                       className={`hud-mode-toggle-btn ${continuousMode ? "is-active" : ""}`}
-                      onClick={() => setContinuousMode((prev) => !prev)}
-                      title="Toggle hands-free continuous voice mode"
+                      onClick={() => {
+                        const nextMode = !continuousMode;
+                        updatePreference("jarvis_continuous_mode", String(nextMode), () => {
+                          setContinuousMode(nextMode);
+                          if (!nextMode) {
+                            voiceSessionActiveRef.current = false;
+                            if (autoListenTimerRef.current !== null) {
+                              clearTimeout(autoListenTimerRef.current);
+                              autoListenTimerRef.current = null;
+                            }
+                          }
+                        });
+                      }}
+                      disabled={status === "connecting" || status === "listening"}
+                      title="Choose whether voice capture continues between assistant replies"
                       aria-pressed={continuousMode}
                     >
-                      {continuousMode ? "AUTO-LISTEN" : "PUSH-TO-TALK"}
+                      {continuousMode ? "HANDS-FREE" : "PUSH-TO-TALK"}
                     </button>
                     {messages.length > 0 && (
                       <button
@@ -704,6 +903,18 @@ export function App() {
                         )}
                       </div>
 
+                      {message.author === "jarvis" && message.executionStatus && (
+                        <p className={`execution-status status-${message.executionStatus}`} role="status">
+                          {message.executionStatus === "success"
+                            ? "Verified complete"
+                            : message.executionStatus === "partial_success"
+                            ? "Partially complete"
+                            : message.executionStatus === "failure"
+                            ? "Request failed"
+                            : "Result not verified"}
+                        </p>
+                      )}
+
                       {message.codeBlocks && message.codeBlocks.map((cb, cbIdx) => (
                         <CodeBlock key={cbIdx} code={cb.code} language={cb.language} />
                       ))}
@@ -736,17 +947,22 @@ export function App() {
 
                   {status === "thinking" && (
                     <p className="message jarvis processing-line">
-                      <span className="hud-spinner" aria-hidden="true" /> Constructing plan…
+                      <span className="hud-spinner" aria-hidden="true" /> Processing your request…
                     </p>
                   )}
                   {status === "searching" && (
                     <p className="message jarvis processing-line">
-                      <span className="hud-spinner" aria-hidden="true" /> Searching verified sources…
+                      <span className="hud-spinner" aria-hidden="true" /> Searching sources…
                     </p>
                   )}
                   {status === "executing" && (
                     <p className="message jarvis processing-line">
-                      <span className="hud-spinner" aria-hidden="true" /> Executing authorized tools…
+                      <span className="hud-spinner" aria-hidden="true" /> Executing requested tools…
+                    </p>
+                  )}
+                  {status === "confirmation" && (
+                    <p className="message jarvis processing-line" role="status">
+                      Waiting for your confirmation before continuing.
                     </p>
                   )}
 
@@ -760,32 +976,27 @@ export function App() {
                 </div>
 
                 <button
-                  className={`talk-button ${status === "listening" ? "is-listening" : ""}`}
+                  className={`talk-button ${status === "listening" || status === "connecting" ? "is-listening" : ""}`}
                   type="button"
-                  onPointerDown={(event) => {
-                    if (status === "speaking") stopSpeech();
-                    if (!continuousMode) event.currentTarget.setPointerCapture(event.pointerId);
-                    void startListening();
-                  }}
-                  onPointerUp={() => {
-                    if (!continuousMode) finishListening();
-                  }}
-                  onPointerCancel={() => {
-                    if (!continuousMode) finishListening();
-                  }}
-                  disabled={status === "thinking" || backendStarting}
+                  onClick={toggleVoiceLink}
+                  disabled={isBusy || Boolean(pendingAction)}
+                  aria-pressed={status === "listening" || status === "connecting"}
                 >
-                  {status === "listening"
+                  {status === "connecting"
+                    ? "Requesting microphone — click to cancel"
+                    : status === "listening"
                     ? continuousMode
-                      ? "Listening — continuous"
-                      : "Listening — release to send"
+                      ? "Voice link active — click to stop"
+                      : "Listening — click to send"
+                    : status === "transcribing" || status === "understanding"
+                    ? "Finalizing voice input…"
                     : status === "speaking"
                     ? "Speaking — click to interrupt"
                     : backendStarting
                     ? "Connecting to core…"
                     : continuousMode
-                    ? "Start voice link"
-                    : "Hold to talk"}
+                    ? "Start hands-free voice link"
+                    : "Start voice input"}
                 </button>
 
                 <div className="mb-2">
@@ -797,12 +1008,21 @@ export function App() {
 
                 <div className="composer-container">
                   <FileUploadDrawer
-                    sessionId={sessionId.current}
+                    sessionId={sessionId}
+                    projectId={activeProjectId}
                     onUploadSuccess={handleFileUploadSuccess}
                     onError={(err) => setError(err)}
                   />
 
                   <form onSubmit={handleSubmit} noValidate className="composer">
+                    <button
+                      type="button"
+                      onClick={() => void handleResetConversation()}
+                      disabled={status === "thinking" || backendStarting}
+                      aria-label="Reset conversation history"
+                    >
+                      Reset
+                    </button>
                     <label className="sr-only" htmlFor="chat-input">
                       Message JARVIS
                     </label>
@@ -812,24 +1032,13 @@ export function App() {
                       maxLength={5000}
                       onChange={(event) => setInput(event.target.value)}
                       placeholder="Issue a command…"
-                      disabled={status === "thinking" || backendStarting}
+                      disabled={isBusy || backendStarting || Boolean(pendingAction)}
                     />
-                    <button type="submit" disabled={!input.trim() || status === "thinking" || backendStarting}>
+                    <button type="submit" disabled={!input.trim() || isBusy || backendStarting || Boolean(pendingAction)}>
                       Send
                     </button>
                   </form>
                 </div>
-
-                <label className="voice-picker sr-only" htmlFor="voice-select">
-                  Voice synthesis
-                  <select id="voice-select" value={voiceId} onChange={(event) => setVoiceId(event.target.value)} disabled={!voices.length} tabIndex={-1} aria-hidden="true">
-                    {voices.map((voice) => (
-                      <option key={voice.id} value={voice.id}>
-                        {voice.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
 
                 {error && (
                   <p className="error" role="alert">
@@ -861,9 +1070,19 @@ export function App() {
         <SettingsModal
           voices={voices}
           selectedVoiceId={voiceId}
-          onSelectVoice={(id) => setVoiceId(id)}
+          onSelectVoice={(id) => updatePreference("jarvis_voice_id", id, () => setVoiceId(id))}
+          selectedMicrophoneId={microphoneDeviceId}
+          onSelectMicrophone={(id) =>
+            updatePreference("jarvis_microphone_device_id", id, () => setMicrophoneDeviceId(id))
+          }
+          responseStyle={responseStyle}
+          onSelectResponseStyle={(style) =>
+            updatePreference("jarvis_response_style", style, () => setResponseStyle(style))
+          }
           wakeWordEnabled={wakeWordEnabled}
-          onToggleWakeWord={(en) => setWakeWordEnabled(en)}
+          onToggleWakeWord={(enabled) =>
+            updatePreference("jarvis_wake_word_enabled", String(enabled), () => setWakeWordEnabled(enabled))
+          }
           onClose={() => setIsSettingsOpen(false)}
         />
       )}

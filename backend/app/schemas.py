@@ -25,13 +25,17 @@ class Citation(BaseModel):
 
 
 class ToolEvent(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     tool_name: str = Field(alias="toolName")
     arguments: dict[str, Any] = Field(default_factory=dict)
     result: dict[str, Any] = Field(default_factory=dict)
     requires_confirmation: bool = Field(default=False, alias="requiresConfirmation")
+    status: Literal["pending", "completed", "failed"] | None = None
+    file_verification: dict[str, Any] | None = Field(default=None, alias="fileVerification")
 
 
 class PlanStep(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     step_number: int = Field(alias="stepNumber")
     title: str
     status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
@@ -39,6 +43,7 @@ class PlanStep(BaseModel):
 
 
 class PendingAction(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     action_id: str = Field(alias="actionId")
     tool_name: str = Field(alias="toolName")
     arguments: dict[str, Any] = Field(default_factory=dict)
@@ -48,17 +53,34 @@ class PendingAction(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     session_id: UUID = Field(alias="sessionId")
     text: str = Field(min_length=1, max_length=50_000)
     mode: AssistantMode = "general"
+    response_style: Literal["concise", "balanced", "detailed"] = Field(
+        default="balanced",
+        alias="responseStyle",
+    )
     project_id: str | None = Field(default=None, alias="projectId")
     confirmed_action_id: str | None = Field(default=None, alias="confirmedActionId")
+    image_ids: list[str] = Field(default_factory=list, max_length=4, alias="imageIds")
+    provider_override: Literal["auto", "gemini", "groq", "openai", "anthropic", "local"] | None = Field(
+        default=None,
+        alias="providerOverride",
+    )
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128, alias="idempotencyKey")
 
 
 class ChatResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     session_id: UUID = Field(alias="sessionId")
     reply: str
     mode: AssistantMode = "general"
+    execution_status: Literal["success", "partial_success", "failure", "unverified"] = Field(
+        default="unverified",
+        alias="executionStatus",
+    )
+    verification: dict[str, Any] = Field(default_factory=dict)
     turns_retained: int = Field(default=0, alias="turnsRetained")
     citations: list[Citation] = Field(default_factory=list)
     tool_events: list[ToolEvent] = Field(default_factory=list, alias="toolEvents")
@@ -275,19 +297,23 @@ class ResearchResponse(BaseModel):
 
 # Code Assistant & Sandbox
 class CodeExecutionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     code: str
     language: Literal["python", "javascript", "typescript", "cpp", "c", "java"] = "python"
     stdin_input: str = Field(default="", alias="stdinInput")
     timeout_seconds: int = Field(default=10, ge=1, le=30, alias="timeoutSeconds")
+    confirmation_token: str | None = Field(default=None, alias="confirmationToken")
 
 
 class CodeExecutionResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     ok: bool
     stdout: str
     stderr: str
     exit_code: int = Field(alias="exitCode")
     execution_time_ms: float = Field(alias="executionTimeMs")
     memory_mb: float = Field(default=0.0, alias="memoryMb")
+    isolation_tier: str = Field(default="restricted_ast_subprocess", alias="isolationTier")
 
 
 class CodeAnalysisRequest(BaseModel):
@@ -332,13 +358,17 @@ class MemoryItem(BaseModel):
     key: str
     value: str
     category: str = "general"
+    provenance: str = "user_explicit"
+    source: str | None = None
+    confidence: float = 1.0
+    conflict: bool = False
     updated_at: str = Field(alias="updatedAt")
 
 
 class MemorySetRequest(BaseModel):
     key: str
     value: str
-    category: str = "general"
+    category: str = "preference"
 
 
 # Automation & Reminders
@@ -383,6 +413,7 @@ class DiagnosticsResponse(BaseModel):
 
 
 class SettingsStatusResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     ai_provider: str = Field(alias="aiProvider")
     available_providers: list[str] = Field(alias="availableProviders")
     active_model: str = Field(alias="activeModel")
@@ -396,6 +427,7 @@ class SettingsStatusResponse(BaseModel):
 
 
 class SettingsUpdateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     ai_provider: str | None = Field(default=None, alias="aiProvider")
     gemini_api_key: str | None = Field(default=None, alias="geminiApiKey")
     groq_api_key: str | None = Field(default=None, alias="groqApiKey")
@@ -404,3 +436,5 @@ class SettingsUpdateRequest(BaseModel):
     elevenlabs_api_key: str | None = Field(default=None, alias="elevenlabsApiKey")
     permission_mode: str | None = Field(default=None, alias="permissionMode")
     wake_word_enabled: bool | None = Field(default=None, alias="wakeWordEnabled")
+    confirmation_token: str | None = Field(default=None, alias="confirmationToken")
+    master_api_key: str | None = Field(default=None, alias="masterApiKey")

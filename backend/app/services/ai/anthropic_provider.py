@@ -41,6 +41,24 @@ class AnthropicProvider(AIProvider):
             if role == "system":
                 system_prompt += f"{content}\n\n"
             elif role in ("user", "assistant"):
+                if role == "user" and isinstance(content, list):
+                    blocks = []
+                    for item in content:
+                        if item.get("type") == "text":
+                            blocks.append({"type": "text", "text": item.get("text", "")})
+                        elif item.get("type") == "image_url":
+                            data_url = item.get("image_url", {}).get("url", "")
+                            header, separator, encoded = data_url.partition(",")
+                            if separator and header.startswith("data:") and ";base64" in header:
+                                blocks.append({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": header[5:].split(";", 1)[0],
+                                        "data": encoded,
+                                    },
+                                })
+                    content = blocks
                 anthropic_messages.append({
                     "role": role,
                     "content": content,
@@ -99,4 +117,5 @@ class AnthropicProvider(AIProvider):
             raw_response=data,
             model=self.model,
             provider=self.name,
+            finish_reason=data.get("stop_reason"),
         )

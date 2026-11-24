@@ -80,6 +80,7 @@ class GroqProvider(AIProvider):
             raw_response=data,
             model=payload["model"],
             provider=self.name,
+            finish_reason=choice.get("finish_reason"),
         )
 
     def _post_with_retry(

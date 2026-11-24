@@ -60,7 +60,7 @@ def analyze_code_task(
     except Exception as exc:
         logger.warning("Code assistant fallback: %s", exc)
         return CodeAnalysisResponse(
-            analysis=f"Master, I have inspected your {language} code. Syntax appears valid.",
+            analysis=f"I inspected the {language} code. Syntax appears valid.",
             fixedOrImprovedCode=code,
             testCode=f"# Automated test verification for {language}\ndef test_basic():\n    assert True",
             complexityScore="O(1)",

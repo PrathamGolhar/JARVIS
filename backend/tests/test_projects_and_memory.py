@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from app.services.memory import memory_store
 from app.services.projects.manager import project_manager
+from app.services.projects.manager import ProjectManager
 
 
 def test_memory_store_set_get_list_delete() -> None:
@@ -36,3 +39,13 @@ def test_project_manager_crud_and_tasks() -> None:
     context_str = project_manager.build_project_context(proj.id)
     assert "Mars Rover Simulation" in context_str
     assert "LiDAR SLAM filter" in context_str
+
+
+def test_project_manager_scopes_projects_by_owner(tmp_path: Path) -> None:
+    manager = ProjectManager(storage_dir=tmp_path)
+    project = manager.create_project("Alice's project", owner_id="owner_alice")
+
+    assert manager.get_project(project.id, owner_id="owner_alice") is not None
+    assert manager.get_project(project.id, owner_id="owner_bob") is None
+    assert manager.list_projects(owner_id="owner_bob") == []
+    assert manager.add_task(project.id, "private task", owner_id="owner_bob") is None

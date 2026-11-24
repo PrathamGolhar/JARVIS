@@ -22,6 +22,14 @@ def extract_file_text_and_meta(file_path: Path | str) -> dict[str, Any]:
     pages_or_units = 1
     topics = []
 
+    if ext in {".png", ".jpg", ".jpeg", ".webp"}:
+        return {
+            "text": "",
+            "total_units": 1,
+            "topics": ["Image attachment"],
+            "size_bytes": path.stat().st_size,
+        }
+
     try:
         if ext == ".pdf":
             reader = PdfReader(str(path))
@@ -91,7 +99,7 @@ def extract_file_text_and_meta(file_path: Path | str) -> dict[str, Any]:
             topics = [f"{ext.lstrip('.').upper()} source file ({pages_or_units} lines)"]
 
     except Exception as exc:
-        text = f"Error extracting content: {exc}"
+        raise RuntimeError(f"Unable to extract content from '{path.name}'.") from exc
 
     return {
         "text": text,

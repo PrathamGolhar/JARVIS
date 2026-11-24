@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.schemas import WebActionPlanRequest, WebActionPlanResponse
+from app.services.auth import require_auth
 from app.services.web_action_planner import make_web_action_plan
 
-router = APIRouter(prefix="/api/web-actions", tags=["web-actions"])
+router = APIRouter(prefix="/api/web-actions", tags=["web-actions"], dependencies=[Depends(require_auth)])
 
 
 # ==============================================================================

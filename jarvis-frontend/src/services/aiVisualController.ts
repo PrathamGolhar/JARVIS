@@ -9,12 +9,14 @@
 
 export type AssistantState =
   | "idle"
+  | "connecting"
   | "listening"
   | "transcribing"
   | "understanding"
   | "thinking"
   | "searching"
   | "executing"
+  | "confirmation"
   | "speaking"
   | "error";
 
@@ -99,10 +101,6 @@ class AIVisualController {
   private subscribers = new Set<VisualStateSubscriber>();
   private animationFrameId: number | null = null;
   private isLoopRunning = false;
-
-  constructor() {
-    this.startLoop();
-  }
 
   public getContext(): AudioContext {
     if (!this.audioContext) {
@@ -236,8 +234,10 @@ class AIVisualController {
    */
   public subscribe(subscriber: VisualStateSubscriber): () => void {
     this.subscribers.add(subscriber);
+    this.startLoop();
     return () => {
       this.subscribers.delete(subscriber);
+      if (this.subscribers.size === 0) this.stopLoop();
     };
   }
 
@@ -254,10 +254,22 @@ class AIVisualController {
           // Prevent bad subscriber from breaking render loop
         }
       }
+      if (this.subscribers.size === 0) {
+        this.stopLoop();
+        return;
+      }
       this.animationFrameId = requestAnimationFrame(tick);
     };
 
     this.animationFrameId = requestAnimationFrame(tick);
+  }
+
+  private stopLoop(): void {
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+    this.isLoopRunning = false;
   }
 
   /**

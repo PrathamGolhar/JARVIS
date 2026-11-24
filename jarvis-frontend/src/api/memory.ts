@@ -4,6 +4,10 @@ export type MemoryItem = {
   key: string;
   value: string;
   category: string;
+  provenance: string;
+  source?: string | null;
+  confidence: number;
+  conflict?: boolean;
   updatedAt: string;
 };
 
@@ -13,7 +17,7 @@ export async function fetchMemories(): Promise<MemoryItem[]> {
   return res.json();
 }
 
-export async function setMemory(key: string, value: string, category: string = "general"): Promise<MemoryItem> {
+export async function setMemory(key: string, value: string, category: string = "preference"): Promise<MemoryItem> {
   const res = await fetch(`${API_BASE_URL}/memory`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

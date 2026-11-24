@@ -11,6 +11,8 @@ export type AssistantMode =
   | "automation"
   | "voice";
 
+export type ResponseStyle = "concise" | "balanced" | "detailed";
+
 export type Citation = {
   title: string;
   url: string;
@@ -23,6 +25,8 @@ export type ToolEvent = {
   arguments?: Record<string, unknown>;
   result?: Record<string, unknown>;
   requiresConfirmation?: boolean;
+  status?: "pending" | "completed" | "failed";
+  fileVerification?: Record<string, unknown>;
 };
 
 export type PlanStep = {
@@ -55,13 +59,19 @@ export type ChatPayload = {
   text: string;
   mode?: AssistantMode;
   projectId?: string;
+  responseStyle?: ResponseStyle;
   confirmedActionId?: string;
+  imageIds?: string[];
+  providerOverride?: "auto" | "gemini" | "groq" | "openai" | "anthropic" | "local";
+  idempotencyKey?: string;
 };
 
 export type ChatResponse = {
   sessionId: string;
   reply: string;
   mode?: AssistantMode;
+  executionStatus?: "success" | "partial_success" | "failure" | "unverified";
+  verification?: Record<string, unknown>;
   turnsRetained?: number;
   citations?: Citation[];
   toolEvents?: ToolEvent[];
@@ -82,8 +92,12 @@ export async function sendChatMessage(payload: ChatPayload): Promise<ChatRespons
         sessionId: payload.sessionId,
         text: payload.text,
         mode: payload.mode || "general",
+        responseStyle: payload.responseStyle || "balanced",
         projectId: payload.projectId,
         confirmedActionId: payload.confirmedActionId,
+        imageIds: payload.imageIds,
+        providerOverride: payload.providerOverride,
+        idempotencyKey: payload.idempotencyKey || crypto.randomUUID(),
       }),
     });
   } catch (err) {

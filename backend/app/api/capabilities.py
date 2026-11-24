@@ -3,9 +3,10 @@ API endpoints for JARVIS Approved Capabilities and Permissions Registry.
 """
 
 from typing import Any
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from app.services.auth import require_auth
 from app.services.permissions import (
     APPROVED_CAPABILITIES,
     ApprovalStatus,
@@ -13,7 +14,7 @@ from app.services.permissions import (
     is_capability_approved,
 )
 
-router = APIRouter(prefix="/api/capabilities", tags=["capabilities"])
+router = APIRouter(prefix="/api/capabilities", tags=["capabilities"], dependencies=[Depends(require_auth)])
 
 
 class CapabilityDto(BaseModel):

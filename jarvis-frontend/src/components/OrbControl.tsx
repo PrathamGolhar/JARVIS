@@ -4,32 +4,47 @@ import { AssistantState } from "../services/aiVisualController";
 
 type OrbControlProps = {
   disabled: boolean;
-  onStart: () => void;
-  onStop: () => void;
+  onActivate: () => void;
   state: AssistantState;
 };
 
-export function OrbControl({ disabled, onStart, onStop, state }: OrbControlProps) {
+export function OrbControl({ disabled, onActivate, state }: OrbControlProps) {
   const label =
-    state === "listening"
-      ? "Listening. Release to send"
+    state === "connecting"
+      ? "Requesting microphone access. Activate to cancel"
+      : state === "listening"
+      ? "Voice input active. Activate to stop or send"
+      : state === "transcribing"
+      ? "Finalizing voice input"
+      : state === "understanding"
+      ? "Understanding request"
       : state === "thinking"
-      ? "Orchestrating plan"
+      ? "Processing request"
+      : state === "confirmation"
+      ? "Waiting for your confirmation"
       : state === "searching"
-      ? "Searching live web"
+      ? "Searching sources"
       : state === "executing"
-      ? "Executing subsystem action"
+      ? "Executing requested tools"
       : state === "speaking"
       ? "JARVIS is speaking. Click to interrupt"
-      : "Hold to talk with JARVIS";
+      : "Activate to start voice input";
 
   const statusLabel =
-    state === "listening"
-      ? "VOICE LINK OPEN"
+    state === "connecting"
+      ? "MICROPHONE ACCESS"
+      : state === "listening"
+      ? "VOICE INPUT ACTIVE"
+      : state === "transcribing"
+      ? "TRANSCRIBING"
+      : state === "understanding"
+      ? "UNDERSTANDING"
       : state === "thinking"
-      ? "NEURAL REASONING"
+      ? "PROCESSING REQUEST"
+      : state === "confirmation"
+      ? "CONFIRMATION REQUIRED"
       : state === "searching"
-      ? "LIVE RESEARCH"
+      ? "SOURCE SEARCH"
       : state === "executing"
       ? "TOOL DISPATCH"
       : state === "speaking"
@@ -43,13 +58,9 @@ export function OrbControl({ disabled, onStart, onStop, state }: OrbControlProps
       type="button"
       className={`orb-control state-${state}`}
       aria-label={label}
+      aria-pressed={state === "listening" || state === "connecting"}
       disabled={disabled}
-      onPointerDown={(event) => {
-        event.currentTarget.setPointerCapture(event.pointerId);
-        onStart();
-      }}
-      onPointerUp={onStop}
-      onPointerCancel={onStop}
+      onClick={onActivate}
     >
       <div className="orb-ring orb-ring-slow" aria-hidden="true" />
       <div className="orb-ring orb-ring-mid" aria-hidden="true" />

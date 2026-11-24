@@ -143,7 +143,7 @@ def generate_structured_study_notes(
                 f"- Primary mechanism and logical formulation\n"
                 f"- Critical definitions and theoretical boundary conditions\n"
                 f"- Step-by-step methodologies and analysis\n\n"
-                f"## 3. Review Summary\nMaster, all core academic points have been organized for high-retention study."
+                f"## 3. Review Summary\nThe core academic points are organized for review."
             ),
             practiceQuestions=[
                 MCQItem(

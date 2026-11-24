@@ -77,4 +77,5 @@ class OpenAIProvider(AIProvider):
             raw_response=data,
             model=self.model,
             provider=self.name,
+            finish_reason=choice.get("finish_reason"),
         )

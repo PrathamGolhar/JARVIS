@@ -16,6 +16,7 @@ class AIChatResponse:
     raw_response: dict[str, Any] = field(default_factory=dict)
     model: str = ""
     provider: str = ""
+    finish_reason: str | None = None
 
 
 class AIProvider:

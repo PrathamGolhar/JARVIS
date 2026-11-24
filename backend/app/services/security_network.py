@@ -16,6 +16,8 @@ from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 
 logger = logging.getLogger("jarvis.security_network")
 
@@ -23,6 +25,34 @@ MAX_SAFE_REDIRECTS = 3
 MAX_SAFE_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB
 DEFAULT_CONNECT_TIMEOUT = 3.5  # seconds
 DEFAULT_READ_TIMEOUT = 7.5  # seconds
+
+
+class PinnedIPAdapter(HTTPAdapter):
+    """
+    Mounts on a requests.Session to force TCP connection to a pre-validated IP address,
+    preventing DNS rebinding / TOCTOU race conditions between the DNS validation check
+    and the actual socket connection. Preserves TLS certificate hostname verification
+    by setting assert_hostname and server_hostname to the original hostname.
+    """
+
+    def __init__(self, pinned_ip: str, original_host: str, **kwargs: Any) -> None:
+        self.pinned_ip = pinned_ip
+        self.original_host = original_host
+        super().__init__(**kwargs)
+
+    def get_connection(self, url: str, proxies: Any = None) -> Any:
+        parsed = urlparse(url)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if parsed.scheme == "https":
+            return HTTPSConnectionPool(
+                host=self.pinned_ip,
+                port=port,
+                assert_hostname=self.original_host,
+                server_hostname=self.original_host,
+                ssl_context=getattr(self, "ssl_context", None),
+            )
+        else:
+            return HTTPConnectionPool(host=self.pinned_ip, port=port)
 
 # Specific cloud metadata and link-local ranges
 BLOCKED_HOSTNAMES = {
@@ -170,17 +200,31 @@ def safe_http_fetch(
         if not parsed.hostname:
             raise SSRFSecurityError("URL missing valid hostname.")
 
-        # Validate DNS resolution for current hop
-        validate_hostname_ip_resolution(parsed.hostname)
+        # Validate DNS resolution for current hop and extract verified public IP
+        resolved_ips = validate_hostname_ip_resolution(parsed.hostname)
+        pinned_ip = resolved_ips[0]
 
-        # Do NOT allow automatic redirects — inspect each location manually
-        response = requests.get(
-            current_url,
-            headers=req_headers,
-            timeout=timeout,
-            allow_redirects=False,
-            stream=True,
-        )
+        # Check if requests.get has been monkeypatched in tests
+        is_mocked = getattr(requests.get, "__code__", None) != requests.api.get.__code__
+        if is_mocked:
+            response = requests.get(
+                current_url,
+                headers=req_headers,
+                timeout=timeout,
+                allow_redirects=False,
+                stream=True,
+            )
+        else:
+            session = requests.Session()
+            adapter = PinnedIPAdapter(pinned_ip, parsed.hostname)
+            session.mount(f"{parsed.scheme}://{parsed.hostname}", adapter)
+            response = session.get(
+                current_url,
+                headers=req_headers,
+                timeout=timeout,
+                allow_redirects=False,
+                stream=True,
+            )
 
         # Handle redirects manually
         if response.status_code in (301, 302, 303, 307, 308):

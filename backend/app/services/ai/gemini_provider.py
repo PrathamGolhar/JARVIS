@@ -81,7 +81,24 @@ class GeminiProvider(AIProvider):
                     }]
                 })
             else:  # user
-                contents.append({"role": "user", "parts": [{"text": str(content)}]})
+                if isinstance(content, list):
+                    parts = []
+                    for item in content:
+                        if item.get("type") == "text":
+                            parts.append({"text": item.get("text", "")})
+                        elif item.get("type") == "image_url":
+                            data_url = item.get("image_url", {}).get("url", "")
+                            header, separator, encoded = data_url.partition(",")
+                            if separator and header.startswith("data:") and ";base64" in header:
+                                parts.append({
+                                    "inline_data": {
+                                        "mime_type": header[5:].split(";", 1)[0],
+                                        "data": encoded,
+                                    }
+                                })
+                    contents.append({"role": "user", "parts": parts or [{"text": ""}]})
+                else:
+                    contents.append({"role": "user", "parts": [{"text": str(content)}]})
 
         # Format tools for Gemini API
         gemini_tools = None
@@ -120,7 +137,7 @@ class GeminiProvider(AIProvider):
         data = resp.json()
         candidates = data.get("candidates", [])
         if not candidates:
-            return AIChatResponse(content="Master, I have processed the request.", model=self.model, provider=self.name)
+            return AIChatResponse(content="I could not produce a response for that request.", model=self.model, provider=self.name)
 
         first_cand = candidates[0]
         content_obj = first_cand.get("content", {})
@@ -147,4 +164,5 @@ class GeminiProvider(AIProvider):
             raw_response=data,
             model=self.model,
             provider=self.name,
+            finish_reason=first_cand.get("finishReason"),
         )

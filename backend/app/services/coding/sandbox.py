@@ -82,10 +82,41 @@ BLOCKED_DUNDERS = {
     "__class__",
 }
 
+# Blocked JavaScript / Node.js runtime APIs and injection vectors
+BLOCKED_JS_PATTERNS = {
+    "child_process",
+    "fs",
+    "net",
+    "http",
+    "https",
+    "tls",
+    "dgram",
+    "cluster",
+    "process.env",
+    "process.mainModule",
+    "eval(",
+    "Function(",
+    "require('",
+    'require("',
+    "require(`",
+    "import(",
+    "WebSocket",
+}
+
 
 class CodeSecurityError(ValueError):
     """Raised when submitted code contains prohibited modules or dangerous constructs."""
     pass
+
+
+def validate_javascript_code(code: str) -> None:
+    """Scan JavaScript / TypeScript source for dangerous Node.js builtins and execution vectors."""
+    lower_code = code.lower()
+    for pattern in BLOCKED_JS_PATTERNS:
+        if pattern.lower() in lower_code:
+            raise CodeSecurityError(
+                f"Prohibited Node.js construct or API '{pattern}' is restricted by sandbox security policy."
+            )
 
 
 class ASTSecurityValidator(ast.NodeVisitor):
@@ -178,12 +209,12 @@ def execute_sandboxed_code(
             memoryMb=0.0,
         )
 
-    # 2. Static Security Analysis (Python)
+    # 2. Static Security Analysis (Python & JavaScript)
     if lang == "python":
         try:
             validate_python_ast(code)
         except CodeSecurityError as sec_err:
-            logger.warning("Code execution rejected by AST security validator: %s", sec_err)
+            logger.warning("Code execution rejected by Python AST security validator: %s", sec_err)
             return CodeExecutionResponse(
                 ok=False,
                 stdout="",
@@ -191,6 +222,21 @@ def execute_sandboxed_code(
                 exitCode=1,
                 executionTimeMs=0.0,
                 memoryMb=0.0,
+                isolationTier="restricted_ast_subprocess",
+            )
+    elif lang in ("javascript", "typescript", "js", "ts"):
+        try:
+            validate_javascript_code(code)
+        except CodeSecurityError as js_sec_err:
+            logger.warning("Code execution rejected by JS security validator: %s", js_sec_err)
+            return CodeExecutionResponse(
+                ok=False,
+                stdout="",
+                stderr=f"Security Policy Violation: {js_sec_err}",
+                exitCode=1,
+                executionTimeMs=0.0,
+                memoryMb=0.0,
+                isolationTier="restricted_ast_subprocess",
             )
 
     # 3. Isolated Ephemeral Workspace

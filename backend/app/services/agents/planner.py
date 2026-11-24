@@ -44,6 +44,11 @@ class PlanningEngine:
         if any(re.search(pat, clean) for pat in cls.DIRECT_ANSWER_PATTERNS):
             return True
 
+        if re.search(r"\b\d+(?:\.\d+)?\s*(?:\+|-|\*|/|\^)\s*\d", clean):
+            return False
+        if re.search(r"\b(?:latest|current|today|right now|live|weather|forecast|news|stock price)\b", clean):
+            return False
+
         # Quick conversational or conceptual query without action verbs
         words = clean.split()
         action_verbs = [

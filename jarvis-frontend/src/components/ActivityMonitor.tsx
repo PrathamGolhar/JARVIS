@@ -10,39 +10,47 @@ type ActivityMonitorProps = {
 const activityDetails: Record<AssistantState, { label: string; defaultEntries: string[] }> = {
   idle: {
     label: "STANDING BY",
-    defaultEntries: ["CORE SYSTEMS OPTIMAL", "VOICE LINK ARMED", "AWAITING COMMAND"],
+    defaultEntries: ["No active request"],
+  },
+  connecting: {
+    label: "MICROPHONE ACCESS",
+    defaultEntries: ["Waiting for browser permission"],
   },
   listening: {
-    label: "VOICE CAPTURE",
-    defaultEntries: ["MICROPHONE STREAM ACTIVE", "DSP TRACKING", "LIVE TRANSCRIPT"],
+    label: "VOICE INPUT ACTIVE",
+    defaultEntries: ["Microphone stream active"],
   },
   transcribing: {
     label: "TRANSCRIBING",
-    defaultEntries: ["SPEECH PARSE", "VAD LOCKED", "FINALIZING"],
+    defaultEntries: ["Finalizing captured speech"],
   },
   understanding: {
     label: "UNDERSTANDING",
-    defaultEntries: ["INTENT PARSE", "CONTEXT LOAD", "PROMPT DISPATCH"],
+    defaultEntries: ["Preparing request"],
   },
   thinking: {
-    label: "ORCHESTRATING",
-    defaultEntries: ["PLAN CONSTRUCTION", "MODEL ROUTING", "DAG PREP"],
+    label: "PROCESSING REQUEST",
+    defaultEntries: ["Waiting for the assistant response"],
   },
   searching: {
-    label: "WEB RESEARCH",
-    defaultEntries: ["LIVE SEARCH", "SOURCE PARSE", "CITATION CHECK"],
+    label: "SEARCHING SOURCES",
+    defaultEntries: ["Source search in progress"],
   },
   executing: {
     label: "TOOL EXECUTION",
-    defaultEntries: ["ACTION DISPATCH", "SANDBOX VERIFY", "AWAITING RESULT"],
+    defaultEntries: ["Requested tool is running"],
+  },
+  confirmation: {
+    label: "WAITING FOR CONFIRMATION",
+    defaultEntries: ["No action will continue until you decide"],
   },
   speaking: {
     label: "SYNTHESIZING",
-    defaultEntries: ["NEURAL AUDIO", "WAVEFORM LOCK", "OUTPUT STREAM"],
+    defaultEntries: ["Voice response playing"],
   },
   error: {
     label: "ATTENTION REQUIRED",
-    defaultEntries: ["SUBSYSTEM ALERT", "DIAGNOSTIC LOGGED", "STANDBY"],
+    defaultEntries: ["Check the message above for details"],
   },
 };
 
@@ -52,7 +60,7 @@ export function ActivityMonitor({ state, activeTool, recentTools = [], recentCom
   const displayEntries = activeTool
     ? [`ACTIVE: ${activeTool.toUpperCase()}`, ...recentTools.slice(-2).map((t) => `RECENT: ${t.toUpperCase()}`)]
     : recentTools.length > 0
-    ? recentTools.slice(-3).map((t) => `DONE: ${t.toUpperCase()}`)
+    ? recentTools.slice(-3).map((t) => `RECENT: ${t.toUpperCase()}`)
     : current.defaultEntries;
 
   return (
@@ -61,7 +69,7 @@ export function ActivityMonitor({ state, activeTool, recentTools = [], recentCom
         <span>AI ACTIVITY</span>
         <i aria-hidden="true" />
       </div>
-      <strong className="activity-live-label">{current.label}</strong>
+      <strong className="activity-live-label" aria-live="polite">{current.label}</strong>
       <ol>
         {displayEntries.map((entry, index) => (
           <li key={`${entry}-${index}`}>{entry}</li>

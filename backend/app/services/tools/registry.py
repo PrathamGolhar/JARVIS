@@ -3,6 +3,7 @@ from enum import Enum
 import json
 import logging
 import secrets
+import threading
 import time
 from typing import Any
 
@@ -24,6 +25,10 @@ from app.services.tools.web_reader import read_webpage_content
 from app.services.tools.web_search import live_web_search
 
 logger = logging.getLogger("jarvis.tools")
+_idempotency_lock = threading.Lock()
+_idempotency_results: dict[str, tuple[float, dict[str, Any]]] = {}
+_IDEMPOTENCY_TTL_SECONDS = 600
+_IDEMPOTENCY_CACHE_MAX_SIZE = 2048
 
 
 class RiskLevel(str, Enum):
@@ -285,6 +290,14 @@ TOOL_RISK_MAP = {
     "open_application": RiskLevel.HIGH,
 }
 
+for _tool_schema in TOOLS_SCHEMA:
+    _tool_schema["function"]["parameters"]["additionalProperties"] = False
+
+TOOL_SCHEMA_BY_NAME = {
+    item["function"]["name"]: item["function"]["parameters"]
+    for item in TOOLS_SCHEMA
+}
+
 
 def is_high_impact_tool(tool_name: str) -> bool:
     """Check if tool is high impact. Unknown tools FAIL-CLOSED to high impact."""
@@ -295,6 +308,26 @@ def validate_tool_arguments(tool_name: str, args: dict[str, Any]) -> tuple[bool,
     """Validate tool arguments against strict schema constraints."""
     if not isinstance(args, dict):
         return False, "Tool arguments must be a JSON dictionary."
+
+    schema = TOOL_SCHEMA_BY_NAME.get(tool_name)
+    if schema is None:
+        return False, f"Tool '{tool_name}' is not registered."
+    properties = schema.get("properties", {})
+    unknown = set(args) - set(properties)
+    if unknown:
+        return False, f"Unexpected argument(s): {', '.join(sorted(unknown))}."
+    missing = set(schema.get("required", [])) - set(args)
+    if missing:
+        return False, f"Missing required argument(s): {', '.join(sorted(missing))}."
+    for name, value in args.items():
+        definition = properties[name]
+        expected_type = definition.get("type")
+        if expected_type == "string" and not isinstance(value, str):
+            return False, f"Argument '{name}' must be a string."
+        if expected_type == "object" and not isinstance(value, dict):
+            return False, f"Argument '{name}' must be an object."
+        if "enum" in definition and value not in definition["enum"]:
+            return False, f"Argument '{name}' must be one of: {', '.join(definition['enum'])}."
 
     if tool_name == "web_search":
         q = args.get("query")
@@ -432,7 +465,7 @@ def _dispatch_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     if tool_name == "open_application":
         app_id = args.get("app_id")
         app = execute_local_action(app_id)  # type: ignore[arg-type]
-        return {"ok": True, "app": app.label, "message": f"Opening {app.label} for you, Master."}
+        return {"ok": True, "app": app.label, "message": f"Opening {app.label}."}
 
     if tool_name == "generate_presentation":
         from app.services.agents.document_agent import document_agent
@@ -463,7 +496,13 @@ def _dispatch_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         return res.model_dump(by_alias=True)
 
     if tool_name == "set_user_preference":
-        item_res = memory_store.set_memory(args.get("key", ""), args.get("value", ""))
+        item_res = memory_store.set_memory(
+            args.get("key", ""),
+            args.get("value", ""),
+            category="preference",
+            provenance="user_directed_tool",
+            source="user-directed memory tool",
+        )
         item = item_res[0] if isinstance(item_res, tuple) else item_res
         return {"ok": True, "message": f"Remembered '{item.key}' in long-term memory."}
 
@@ -513,6 +552,7 @@ def execute_tool_call(
     raw_arguments: str | dict[str, Any],
     session_id: str = "general",
     timeout_seconds: float | None = None,
+    execution_key: str | None = None,
 ) -> dict[str, Any]:
     """Execute a registered tool with strict schema validation, permission checks, timeouts, and error shielding."""
     from app.services.permissions import validate_tool_approval
@@ -560,19 +600,54 @@ def execute_tool_call(
             "executionTimeMs": round((time.perf_counter() - start_time) * 1000, 2),
         }
 
+    cache_key = f"{session_id}:{execution_key}" if execution_key else None
+    if cache_key:
+        with _idempotency_lock:
+            now = time.monotonic()
+            for old_key, (created, _) in list(_idempotency_results.items()):
+                if now - created > _IDEMPOTENCY_TTL_SECONDS:
+                    _idempotency_results.pop(old_key, None)
+            previous = _idempotency_results.get(cache_key)
+            if previous is not None:
+                replay = dict(previous[1])
+                replay["idempotentReplay"] = True
+                return replay
+            while len(_idempotency_results) >= _IDEMPOTENCY_CACHE_MAX_SIZE:
+                removable = next(
+                    (
+                        key for key, (_, cached_result) in _idempotency_results.items()
+                        if cached_result.get("executionStatus") != "in_progress"
+                    ),
+                    None,
+                )
+                if removable is None:
+                    break
+                _idempotency_results.pop(removable, None)
+            _idempotency_results[cache_key] = (
+                now,
+                {
+                    "ok": False,
+                    "tool": tool_name,
+                    "executionStatus": "in_progress",
+                    "error": "Execution is already in progress; its side effect will not be repeated.",
+                    "traceId": trace_id,
+                },
+            )
+
     timeout = timeout_seconds or TOOL_TIMEOUTS.get(tool_name, DEFAULT_TOOL_TIMEOUT)
     logger.info("Executing tool %s [trace=%s, timeout=%.1fs]", tool_name, trace_id, timeout)
 
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(_dispatch_tool, tool_name, args)
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_dispatch_tool, tool_name, args)
-            raw_result = future.result(timeout=timeout)
+        raw_result = future.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
         duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
         logger.warning("Tool %s timed out after %.1fs [trace=%s]", tool_name, timeout, trace_id)
-        return {
+        result = {
             "ok": False,
             "tool": tool_name,
+            "executionStatus": "unknown",
             "error": f"Tool '{tool_name}' execution timed out after {timeout:.1f} seconds.",
             "traceId": trace_id,
             "executionTimeMs": duration_ms,
@@ -580,26 +655,33 @@ def execute_tool_call(
     except Exception as exc:
         duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
         logger.warning("Tool %s execution failed: %s [trace=%s]", tool_name, exc, trace_id)
-        return {
+        result = {
             "ok": False,
             "tool": tool_name,
             "error": f"Tool execution failed: {exc}",
             "traceId": trace_id,
             "executionTimeMs": duration_ms,
         }
+    else:
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        if isinstance(raw_result, dict):
+            raw_result.setdefault("tool", tool_name)
+            raw_result.setdefault("traceId", trace_id)
+            raw_result.setdefault("executionTimeMs", duration_ms)
+            result = raw_result
+        else:
+            result = {
+                "ok": True,
+                "tool": tool_name,
+                "result": raw_result,
+                "traceId": trace_id,
+                "executionTimeMs": duration_ms,
+            }
+    finally:
+        # A timed-out callable may still be running; never block this request waiting for it.
+        executor.shutdown(wait=False, cancel_futures=True)
 
-    duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
-    # Ensure raw_result has tool, traceId, and executionTimeMs metadata attached
-    if isinstance(raw_result, dict):
-        raw_result.setdefault("tool", tool_name)
-        raw_result.setdefault("traceId", trace_id)
-        raw_result.setdefault("executionTimeMs", duration_ms)
-        return raw_result
-
-    return {
-        "ok": True,
-        "tool": tool_name,
-        "result": raw_result,
-        "traceId": trace_id,
-        "executionTimeMs": duration_ms,
-    }
+    if cache_key:
+        with _idempotency_lock:
+            _idempotency_results[cache_key] = (time.monotonic(), dict(result))
+    return result

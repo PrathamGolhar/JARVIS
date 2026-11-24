@@ -115,19 +115,33 @@ def execute_with_failover(
     temperature: float = 0.3,
     max_tokens: int = 800,
     user_override: str | None = None,
+    allowed_providers: list[str] | None = None,
 ) -> tuple[AIChatResponse, str]:
     """
     Execute a chat request with automatic provider failover.
 
     Returns (response, provider_name_used).
 
-    Failover order: preferred → cascade → local.
+    Failover order: preferred → cascade → local unless a capability restriction is supplied.
     Authentication errors and quota exhaustion are not retried.
     """
     pref = (user_override or settings.ai_provider or "auto").lower()
 
+    if pref == "local" and allowed_providers is None:
+        local = LocalProvider()
+        rec = provider_health_registry.get("local")
+        rec.configured = True
+        rec.status = ProviderStatus.HEALTHY
+        response = local.chat(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens)
+        return response, "local"
+
     # Build ordered list of providers to try
-    if pref in _PROVIDER_CLASSES:
+    if allowed_providers is not None:
+        providers_to_try = [name for name in allowed_providers if name in _PROVIDER_CLASSES]
+        if pref in providers_to_try:
+            providers_to_try.remove(pref)
+            providers_to_try.insert(0, pref)
+    elif pref in _PROVIDER_CLASSES:
         providers_to_try = [pref] + [p for p in _PROVIDER_CASCADE if p != pref]
     else:
         providers_to_try = list(_PROVIDER_CASCADE)
@@ -183,7 +197,8 @@ def execute_with_failover(
 
     # All cloud providers failed — use local offline engine and surface failure clearly
     logger.error("All AI providers exhausted. Failures:\n%s", "\n".join(failures))
-    failure_summary = "\n".join(f"  • {f}" for f in failures)
+    if allowed_providers is not None:
+        raise RuntimeError("All vision-capable AI providers failed: " + "; ".join(failures))
     local = LocalProvider()
     rec = provider_health_registry.get("local")
     rec.configured = True
@@ -221,6 +236,7 @@ async def execute_with_failover_async(
     temperature: float = 0.3,
     max_tokens: int = 800,
     user_override: str | None = None,
+    allowed_providers: list[str] | None = None,
 ) -> tuple[AIChatResponse, str]:
     """
     Non-blocking asynchronous wrapper for execute_with_failover.
@@ -234,4 +250,5 @@ async def execute_with_failover_async(
         temperature=temperature,
         max_tokens=max_tokens,
         user_override=user_override,
+        allowed_providers=allowed_providers,
     )

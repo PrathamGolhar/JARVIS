@@ -27,34 +27,47 @@ export function PlanExecutionIndicator({ steps }: PlanExecutionIndicatorProps) {
         {steps.map((s) => {
           const isDone = s.status === "completed";
           const isCurrent = s.status === "in_progress";
+          const isFailed = s.status === "failed";
+          const stateColor = isDone
+            ? "#10b981"
+            : isFailed
+            ? "#ff3860"
+            : isCurrent
+            ? "#00d9ff"
+            : "#64748b";
 
           return (
             <div
               key={s.stepNumber}
+              aria-label={`Step ${s.stepNumber}: ${s.title}, ${s.status}`}
               style={{
                 display: "flex",
-                alignItems: "center",
+                alignItems: "flex-start",
                 gap: "10px",
                 fontSize: "12px",
-                color: isDone ? "#94a3b8" : isCurrent ? "#ffffff" : "#64748b",
+                color: isDone ? "#94a3b8" : isFailed ? "#ff99b0" : isCurrent ? "#ffffff" : "#64748b",
               }}
             >
               <span style={{
                 width: "18px",
                 height: "18px",
                 borderRadius: "50%",
-                background: isDone ? "rgba(16, 185, 129, 0.2)" : isCurrent ? "rgba(0, 217, 255, 0.3)" : "rgba(255, 255, 255, 0.05)",
-                border: isDone ? "1px solid #10b981" : isCurrent ? "1px solid #00d9ff" : "1px solid rgba(255, 255, 255, 0.1)",
+                background: isDone ? "rgba(16, 185, 129, 0.2)" : isFailed ? "rgba(255, 56, 96, 0.15)" : isCurrent ? "rgba(0, 217, 255, 0.3)" : "rgba(255, 255, 255, 0.05)",
+                border: `1px solid ${stateColor}`,
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
                 fontSize: "10px",
-                color: isDone ? "#10b981" : isCurrent ? "#00d9ff" : "#64748b",
+                color: stateColor,
                 fontWeight: 700,
+                flexShrink: 0,
               }}>
-                {isDone ? "✓" : isCurrent ? "⟳" : s.stepNumber}
+                {isDone ? "✓" : isFailed ? "!" : isCurrent ? "⟳" : s.stepNumber}
               </span>
-              <span style={{ fontWeight: isCurrent ? 600 : 400 }}>{s.title}</span>
+              <span>
+                <span style={{ fontWeight: isCurrent ? 600 : 400 }}>{s.title}</span>
+                {s.detail && <span style={{ display: "block", marginTop: "2px", color: "#94a3b8" }}>{s.detail}</span>}
+              </span>
             </div>
           );
         })}

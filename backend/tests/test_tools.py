@@ -1,6 +1,8 @@
+import time
+
 from app.services.tools.calculator import evaluate_expression
 from app.services.tools.file_tools import read_workspace_file, search_workspace_files, write_workspace_file
-from app.services.tools.registry import execute_tool_call, is_high_impact_tool
+from app.services.tools.registry import execute_tool_call, is_high_impact_tool, validate_tool_arguments
 from app.services.tools.system_info import get_system_diagnostics
 from app.services.tools.weather import get_live_weather
 from app.services.tools.web_reader import read_webpage_content
@@ -37,6 +39,21 @@ def test_tool_registry_risk_mapping() -> None:
     assert is_high_impact_tool("get_weather") is False
 
 
+def test_tool_schema_rejects_missing_and_unknown_arguments() -> None:
+    valid, message = validate_tool_arguments("calculator", {"expression": "2 + 2"})
+    assert valid is True
+    assert message == ""
+
+    missing_valid, _ = validate_tool_arguments("calculator", {})
+    assert missing_valid is False
+    unknown_valid, message = validate_tool_arguments(
+        "calculator",
+        {"expression": "2 + 2", "unexpected": "value"},
+    )
+    assert unknown_valid is False
+    assert "Unexpected argument" in message
+
+
 def test_file_tools_workspace_confinement() -> None:
     # Safe write & read in test workspace
     write_res = write_workspace_file("test_artifact.txt", "Jarvis active")
@@ -64,3 +81,35 @@ def test_web_reader_ssrf_protection() -> None:
     res_bad = read_webpage_content("ftp://example.com/file")
     assert res_bad["ok"] is False
     assert "Invalid URL scheme" in res_bad["error"]
+
+
+def test_timed_out_tool_is_not_repeated_for_same_execution_key(monkeypatch) -> None:
+    calls = 0
+
+    def slow_dispatch(tool_name, arguments):
+        nonlocal calls
+        calls += 1
+        time.sleep(0.05)
+        return {"ok": True, "result": 4}
+
+    monkeypatch.setattr("app.services.tools.registry._dispatch_tool", slow_dispatch)
+    first = execute_tool_call(
+        "calculator",
+        {"expression": "2 + 2"},
+        session_id="timeout-idempotency-test",
+        timeout_seconds=0.001,
+        execution_key="tool-call-1",
+    )
+    time.sleep(0.06)
+    replay = execute_tool_call(
+        "calculator",
+        {"expression": "2 + 2"},
+        session_id="timeout-idempotency-test",
+        timeout_seconds=0.001,
+        execution_key="tool-call-1",
+    )
+
+    assert first["executionStatus"] == "unknown"
+    assert replay["executionStatus"] == "unknown"
+    assert replay["idempotentReplay"] is True
+    assert calls == 1

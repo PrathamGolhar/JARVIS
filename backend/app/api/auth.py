@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from app.services.auth import (
     create_session_token,
     get_configured_api_key,
+    owner_id_for_credential,
     require_auth,
     revoke_session_token,
     verify_credential,
@@ -49,7 +50,10 @@ async def obtain_session_token(payload: AuthTokenRequest) -> AuthTokenResponse:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Master API Key.",
         )
-    token = create_session_token(label="user_session")
+    token = create_session_token(
+        label="user_session",
+        owner_id=owner_id_for_credential(payload.api_key),
+    )
     return AuthTokenResponse(ok=True, session_token=token)
 
 

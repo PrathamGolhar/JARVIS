@@ -86,7 +86,7 @@ export const TopNavigationBar: React.FC<TopNavigationBarProps> = ({
       <div className="flex items-center space-x-2.5">
         {/* Real-time Clock */}
         <div className="text-xs text-cyan-300/90 font-mono tracking-widest px-2 py-1 rounded bg-slate-950/60 border border-cyan-500/20 hidden sm:block">
-          {timeString || '03:42:00 AM'}
+          {timeString}
         </div>
 
         {/* Command Palette Trigger */}

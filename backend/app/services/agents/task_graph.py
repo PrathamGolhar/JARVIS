@@ -121,9 +121,10 @@ class TaskGraph:
         """Signal cancellation for remaining tasks."""
         self._cancelled = True
         for node in self.nodes.values():
-            if node.status == NodeStatus.PENDING:
+            if node.status in (NodeStatus.PENDING, NodeStatus.RUNNING):
                 node.status = NodeStatus.CANCELLED
                 node.error = "Execution cancelled by caller."
+                node.end_time = time.time()
 
     def is_complete(self) -> bool:
         return all(node.status in (NodeStatus.COMPLETED, NodeStatus.FAILED, NodeStatus.SKIPPED, NodeStatus.CANCELLED) for node in self.nodes.values())
@@ -188,14 +189,23 @@ class TaskGraph:
                 async with semaphore:
                     await self._execute_single_node(n)
 
-            await asyncio.gather(*[_run_with_sem(n) for n in ready_nodes])
+            try:
+                await asyncio.gather(*[_run_with_sem(n) for n in ready_nodes])
+            except asyncio.CancelledError:
+                self.cancel()
+                raise
 
         all_completed = all(n.status == NodeStatus.COMPLETED for n in self.nodes.values())
         return {
             "completed": all_completed,
+            "cancelled": self._cancelled,
             "progress": self.get_progress_summary(),
             "results": {nid: n.result for nid, n in self.nodes.items() if n.status == NodeStatus.COMPLETED},
-            "failures": {nid: n.error for nid, n in self.nodes.items() if n.status in (NodeStatus.FAILED, NodeStatus.SKIPPED)},
+            "failures": {
+                nid: n.error
+                for nid, n in self.nodes.items()
+                if n.status in (NodeStatus.FAILED, NodeStatus.SKIPPED, NodeStatus.CANCELLED)
+            },
         }
 
     async def _execute_single_node(self, node: TaskNode) -> None:
@@ -225,8 +235,12 @@ class TaskGraph:
             else:
                 node.result = {"ok": True, "message": f"Completed {node.title}"}
 
-            node.status = NodeStatus.COMPLETED
-            logger.info("TaskGraph: Completed task '%s' (%s)", node.title, node.id)
+            if self._cancelled:
+                node.status = NodeStatus.CANCELLED
+                node.error = "Execution cancelled by caller."
+            else:
+                node.status = NodeStatus.COMPLETED
+                logger.info("TaskGraph: Completed task '%s' (%s)", node.title, node.id)
         except asyncio.TimeoutError:
             node.status = NodeStatus.FAILED
             node.error = f"Task timed out after {node.timeout_seconds:.1f} seconds."

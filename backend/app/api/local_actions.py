@@ -80,4 +80,4 @@ async def execute_planned_local_action(request: Request, body: LocalActionExecut
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     except OSError as error:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Windows could not open {body.app_id}.") from error
-    return LocalActionExecuteResponse(ok=True, message=f"Opening {app.label} for you, Master.")
+    return LocalActionExecuteResponse(ok=True, message=f"Opening {app.label}.")

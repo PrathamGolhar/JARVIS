@@ -56,16 +56,14 @@ class OutputVerifier:
         if expected_extension and ext != expected_extension.lower():
             return {"verified": False, "reason": f"File extension '{ext}' does not match expected '{expected_extension}'."}
 
-        # Validate magic byte signatures for binary document formats
-        if ext in MAGIC_BYTES:
-            expected_magic = MAGIC_BYTES[ext]
-            try:
-                with p.open("rb") as f:
-                    header = f.read(len(expected_magic))
-                    if header != expected_magic:
-                        return {"verified": False, "reason": f"File '{p.name}' has invalid file header format for {ext}."}
-            except Exception as exc:
-                return {"verified": False, "reason": f"Unable to read file headers: {exc}"}
+        # Open every output to confirm it is readable, then validate known binary formats.
+        try:
+            with p.open("rb") as f:
+                header = f.read(max((len(magic) for magic in MAGIC_BYTES.values()), default=1))
+        except OSError as exc:
+            return {"verified": False, "reason": f"Unable to read file '{p.name}': {exc}"}
+        if ext in MAGIC_BYTES and not header.startswith(MAGIC_BYTES[ext]):
+            return {"verified": False, "reason": f"File '{p.name}' has invalid file header format for {ext}."}
 
         return {
             "verified": True,
@@ -106,6 +104,7 @@ class OutputVerifier:
         """
         if not raw_text:
             return ""
+        safe_source_label = re.sub(r"[^A-Za-z0-9_. -]", "_", source_label)[:120]
 
         # Disarm overt prompt injection directives
         disarmed = raw_text
@@ -122,7 +121,7 @@ class OutputVerifier:
 
         # Encase untrusted data in explicit isolated data tags
         return (
-            f"\n<untrusted_external_data source=\"{source_label}\">\n"
+            f"\n<untrusted_external_data source=\"{safe_source_label}\">\n"
             f"{disarmed}\n"
             f"</untrusted_external_data>\n"
         )

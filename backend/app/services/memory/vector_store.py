@@ -35,6 +35,8 @@ class DocumentMetadata:
     total_chunks: int
     total_words: int
     session_id: Optional[str] = None
+    owner_id: Optional[str] = None
+    project_id: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.datetime.now().isoformat())
 
 
@@ -47,6 +49,8 @@ class RetrievedChunk:
     score: float
     chunk_index: int
     session_id: Optional[str] = None
+    owner_id: Optional[str] = None
+    project_id: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -59,6 +63,12 @@ class PersistentRAGStore:
     def __init__(self, db_path: Optional[str | Path] = None) -> None:
         self.db_path = str(db_path or (settings.data_dir / "jarvis_documents.db"))
         self._lock = threading.RLock()
+        configured_key = getattr(settings, "api_key", "").strip()
+        self.legacy_owner_id = (
+            hashlib.sha256(f"jarvis-owner:{configured_key}".encode("utf-8")).hexdigest()
+            if configured_key
+            else "legacy"
+        )
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -83,6 +93,8 @@ class PersistentRAGStore:
                     total_chunks INTEGER NOT NULL,
                     total_words INTEGER NOT NULL,
                     session_id TEXT,
+                    owner_id TEXT NOT NULL DEFAULT 'legacy',
+                    project_id TEXT,
                     created_at TEXT NOT NULL
                 );
                 """
@@ -98,6 +110,8 @@ class PersistentRAGStore:
                     chunk_index INTEGER NOT NULL,
                     text TEXT NOT NULL,
                     session_id TEXT,
+                    owner_id TEXT NOT NULL DEFAULT 'legacy',
+                    project_id TEXT,
                     metadata_json TEXT,
                     FOREIGN KEY (file_id) REFERENCES documents(file_id) ON DELETE CASCADE
                 );
@@ -108,6 +122,24 @@ class PersistentRAGStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON document_chunks(file_id);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_session ON document_chunks(session_id);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_hash ON documents(content_hash);")
+            owner_migration_required: dict[str, bool] = {}
+            for table, columns in (
+                ("documents", {"owner_id": "TEXT NOT NULL DEFAULT 'legacy'", "project_id": "TEXT"}),
+                ("document_chunks", {"owner_id": "TEXT NOT NULL DEFAULT 'legacy'", "project_id": "TEXT"}),
+            ):
+                existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+                owner_migration_required[table] = "owner_id" not in existing
+                for column, definition in columns.items():
+                    if column not in existing:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            for table, required in owner_migration_required.items():
+                if required:
+                    conn.execute(
+                        f"UPDATE {table} SET owner_id = ? WHERE owner_id = 'legacy'",
+                        (self.legacy_owner_id,),
+                    )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_owner_session ON documents(owner_id, session_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_owner_scope ON document_chunks(owner_id, session_id, project_id)")
 
             # 4. FTS5 Virtual Table for full-text search
             try:
@@ -146,19 +178,19 @@ class PersistentRAGStore:
         session_id: Optional[str] = None,
         chunk_size: int = 500,
         overlap: int = 100,
+        owner_id: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> int:
         """
         Segment text into boundary-aware overlapping chunks and persist into SQLite index.
         Implements duplicate detection via SHA-256 hash.
         """
         clean_text = full_text.strip()
-        if not clean_text:
-            return 0
-
         content_hash = self._compute_sha256(clean_text)
+        principal_id = owner_id or "legacy"
 
         # Sentence-aware chunking: splits by sentences first, then groups into chunks
-        sentences = re.split(r"(?<=[.!?\n])\s+", clean_text)
+        sentences = re.split(r"(?<=[.!?\n])\s+", clean_text) if clean_text else []
         chunks: list[str] = []
         current_words: list[str] = []
 
@@ -184,6 +216,21 @@ class PersistentRAGStore:
             chunks.append(" ".join(current_words))
 
         with self._lock, self._get_connection() as conn:
+            existing = conn.execute(
+                "SELECT content_hash, total_chunks, filename, session_id, owner_id, project_id "
+                "FROM documents WHERE file_id = ?",
+                (file_id,),
+            ).fetchone()
+            if (
+                existing
+                and existing["content_hash"] == content_hash
+                and existing["filename"] == filename
+                and existing["session_id"] == session_id
+                and existing["owner_id"] == principal_id
+                and existing["project_id"] == project_id
+            ):
+                return int(existing["total_chunks"])
+
             # Delete existing chunks for this file_id (for re-indexing)
             conn.execute("DELETE FROM document_chunks WHERE file_id = ?", (file_id,))
             conn.execute("DELETE FROM documents WHERE file_id = ?", (file_id,))
@@ -193,10 +240,21 @@ class PersistentRAGStore:
             # Insert document ledger
             conn.execute(
                 """
-                INSERT INTO documents (file_id, filename, content_hash, total_chunks, total_words, session_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO documents
+                    (file_id, filename, content_hash, total_chunks, total_words, session_id, owner_id, project_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (file_id, filename, content_hash, len(chunks), total_words, session_id, datetime.datetime.now().isoformat()),
+                (
+                    file_id,
+                    filename,
+                    content_hash,
+                    len(chunks),
+                    total_words,
+                    session_id,
+                    principal_id,
+                    project_id,
+                    datetime.datetime.now().isoformat(),
+                ),
             )
 
             # Insert chunks and update FTS5
@@ -207,12 +265,30 @@ class PersistentRAGStore:
                     "word_count": len(chunk_content.split()),
                     "total_chunks": len(chunks),
                 }
+                page_refs = [
+                    int(page)
+                    for page in re.findall(r"---\s*(?:Page|Slide)\s+(\d+)\s*---", chunk_content, flags=re.IGNORECASE)
+                ]
+                if page_refs:
+                    meta["page_start"] = min(page_refs)
+                    meta["page_end"] = max(page_refs)
                 conn.execute(
                     """
-                    INSERT INTO document_chunks (chunk_id, file_id, filename, chunk_index, text, session_id, metadata_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO document_chunks
+                        (chunk_id, file_id, filename, chunk_index, text, session_id, owner_id, project_id, metadata_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (cid, file_id, filename, idx, chunk_content, session_id, json.dumps(meta)),
+                    (
+                        cid,
+                        file_id,
+                        filename,
+                        idx,
+                        chunk_content,
+                        session_id,
+                        principal_id,
+                        project_id,
+                        json.dumps(meta),
+                    ),
                 )
                 try:
                     conn.execute(
@@ -231,6 +307,8 @@ class PersistentRAGStore:
         top_k: int = 4,
         file_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """
         Execute BM25 hybrid ranking across persistent document chunks.
@@ -249,7 +327,18 @@ class PersistentRAGStore:
                 where_clauses.append("file_id = ?")
                 params.append(file_id)
 
-            if session_id:
+            if owner_id:
+                where_clauses.append("owner_id = ?")
+                params.append(owner_id)
+                scope_clauses = ["session_id IS NULL"]
+                if session_id:
+                    scope_clauses.append("session_id = ?")
+                    params.append(session_id)
+                if project_id:
+                    scope_clauses.append("project_id = ?")
+                    params.append(project_id)
+                where_clauses.append(f"({' OR '.join(scope_clauses)})")
+            elif session_id:
                 # Include chunks matching this session OR global chunks (session_id IS NULL)
                 where_clauses.append("(session_id = ? OR session_id IS NULL)")
                 params.append(session_id)
@@ -301,7 +390,7 @@ class PersistentRAGStore:
                     scored.append((score, row))
 
         # Sort and deduplicate matches
-        scored.sort(key=lambda x: x[0], reverse=True)
+        scored.sort(key=lambda x: (x[0], x[1]["chunk_id"]), reverse=True)
         results: list[dict[str, Any]] = []
 
         seen_snippets: set[str] = set()
@@ -327,9 +416,16 @@ class PersistentRAGStore:
 
         return results
 
-    def delete_document(self, file_id: str) -> bool:
+    def delete_document(self, file_id: str, owner_id: Optional[str] = None) -> bool:
         """Completely purge a document and all associated chunks from storage and FTS index."""
         with self._lock, self._get_connection() as conn:
+            if owner_id:
+                owned = conn.execute(
+                    "SELECT 1 FROM documents WHERE file_id = ? AND owner_id = ?",
+                    (file_id, owner_id),
+                ).fetchone()
+                if not owned:
+                    return False
             cur1 = conn.execute("DELETE FROM document_chunks WHERE file_id = ?", (file_id,))
             cur2 = conn.execute("DELETE FROM documents WHERE file_id = ?", (file_id,))
             try:
@@ -337,6 +433,37 @@ class PersistentRAGStore:
             except sqlite3.OperationalError:
                 pass
             return (cur1.rowcount + cur2.rowcount) > 0
+
+    def get_document(self, file_id: str, owner_id: Optional[str] = None) -> dict[str, Any] | None:
+        with self._lock, self._get_connection() as conn:
+            query = "SELECT file_id, filename, session_id, owner_id, project_id, content_hash FROM documents WHERE file_id = ?"
+            params: tuple[Any, ...] = (file_id,)
+            if owner_id:
+                query += " AND owner_id = ?"
+                params += (owner_id,)
+            row = conn.execute(query, params).fetchone()
+            return dict(row) if row else None
+
+    def list_session_documents(self, session_id: str, owner_id: str) -> list[dict[str, Any]]:
+        with self._lock, self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT file_id, filename FROM documents WHERE session_id = ? AND owner_id = ?",
+                (session_id, owner_id),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def attach_document_to_project(self, file_id: str, project_id: str, owner_id: str) -> bool:
+        with self._lock, self._get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE documents SET project_id = ? WHERE file_id = ? AND owner_id = ?",
+                (project_id, file_id, owner_id),
+            )
+            if cursor.rowcount:
+                conn.execute(
+                    "UPDATE document_chunks SET project_id = ? WHERE file_id = ? AND owner_id = ?",
+                    (project_id, file_id, owner_id),
+                )
+            return cursor.rowcount > 0
 
     def get_document_stats(self) -> dict[str, Any]:
         """Return total document count and total chunks stored."""

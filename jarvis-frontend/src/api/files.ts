@@ -9,13 +9,20 @@ export type FileUploadResult = {
   message: string;
 };
 
-export async function uploadDocument(file: File, sessionId?: string): Promise<FileUploadResult> {
+export async function uploadDocument(
+  file: File,
+  sessionId?: string,
+  projectId?: string,
+): Promise<FileUploadResult> {
   const formData = new FormData();
   formData.append("file", file);
 
   const url = new URL(`${API_BASE_URL}/files/upload`, window.location.origin);
   if (sessionId) {
     url.searchParams.append("session_id", sessionId);
+  }
+  if (projectId) {
+    url.searchParams.append("project_id", projectId);
   }
 
   const response = await fetch(url.toString(), {

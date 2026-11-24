@@ -1,11 +1,12 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 
 logger = logging.getLogger("jarvis.speech")
 
 from app.schemas import TranscriptResponse, TtsRequest, VoicesResponse
+from app.services.auth import require_auth
 from app.services.edge_tts_service import EdgeTtsError, available_voices, generate_speech
 from app.services.groq_stt import (
     GroqAuthError,
@@ -15,7 +16,7 @@ from app.services.groq_stt import (
     transcribe,
 )
 
-router = APIRouter(prefix="/api", tags=["speech"])
+router = APIRouter(prefix="/api", tags=["speech"], dependencies=[Depends(require_auth)])
 
 ALLOWED_AUDIO_TYPES = {
     "audio/webm",

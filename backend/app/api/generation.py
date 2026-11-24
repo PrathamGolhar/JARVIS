@@ -1,23 +1,26 @@
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.services.auth import require_principal
 from app.schemas import (
     GenerateDocxRequest,
     GeneratePdfRequest,
     GeneratePptxRequest,
     GenerateXlsxRequest,
-    GeneratedFileItem,
 )
-from app.services.auth import require_auth
 from app.services.document_generation.docx_generator import generate_docx_document
 from app.services.document_generation.excel_generator import generate_excel_spreadsheet
 from app.services.document_generation.pdf_generator import generate_pdf_document
 from app.services.document_generation.pptx_generator import generate_pptx_presentation
+from app.services.memory import memory_store
 
-router = APIRouter(prefix="/api/generate", tags=["generation"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/generate", tags=["generation"], dependencies=[Depends(require_principal)])
 
 
 @router.post("/pdf")
-async def generate_pdf(request: GeneratePdfRequest):
+async def generate_pdf(
+    request: GeneratePdfRequest,
+    owner_id: str = Depends(require_principal),
+):
     try:
         pdf_path = generate_pdf_document(
             title=request.title,
@@ -25,6 +28,7 @@ async def generate_pdf(request: GeneratePdfRequest):
             subtitle=request.subtitle,
             subject=request.subject,
         )
+        memory_store.register_artifact(pdf_path.name, owner_id)
         return {
             "ok": True,
             "filename": pdf_path.name,
@@ -36,7 +40,10 @@ async def generate_pdf(request: GeneratePdfRequest):
 
 
 @router.post("/pptx")
-async def generate_pptx(request: GeneratePptxRequest):
+async def generate_pptx(
+    request: GeneratePptxRequest,
+    owner_id: str = Depends(require_principal),
+):
     try:
         from app.services.agents.document_agent import document_agent
         if not request.slides:
@@ -45,6 +52,8 @@ async def generate_pptx(request: GeneratePptxRequest):
                 num_slides=request.num_slides,
                 theme_color=request.theme_color,
             )
+            filename = res["file"]["filename"]
+            memory_store.register_artifact(filename, owner_id)
             return {"ok": True, "file": res["file"]}
 
         pptx_path = generate_pptx_presentation(
@@ -52,6 +61,7 @@ async def generate_pptx(request: GeneratePptxRequest):
             slides=request.slides,
             theme_color=request.theme_color,
         )
+        memory_store.register_artifact(pptx_path.name, owner_id)
         return {
             "ok": True,
             "filename": pptx_path.name,
@@ -63,7 +73,10 @@ async def generate_pptx(request: GeneratePptxRequest):
 
 
 @router.post("/docx")
-async def generate_docx(request: GenerateDocxRequest):
+async def generate_docx(
+    request: GenerateDocxRequest,
+    owner_id: str = Depends(require_principal),
+):
     try:
         docx_path = generate_docx_document(
             title=request.title,
@@ -71,6 +84,7 @@ async def generate_docx(request: GenerateDocxRequest):
             subtitle=request.subtitle,
             author=request.author,
         )
+        memory_store.register_artifact(docx_path.name, owner_id)
         return {
             "ok": True,
             "filename": docx_path.name,
@@ -82,7 +96,10 @@ async def generate_docx(request: GenerateDocxRequest):
 
 
 @router.post("/xlsx")
-async def generate_xlsx(request: GenerateXlsxRequest):
+async def generate_xlsx(
+    request: GenerateXlsxRequest,
+    owner_id: str = Depends(require_principal),
+):
     try:
         xlsx_path = generate_excel_spreadsheet(
             filename=request.filename,
@@ -91,6 +108,7 @@ async def generate_xlsx(request: GenerateXlsxRequest):
             sheet_name=request.sheet_name,
             include_summary_row=request.include_summary_row,
         )
+        memory_store.register_artifact(xlsx_path.name, owner_id)
         return {
             "ok": True,
             "filename": xlsx_path.name,

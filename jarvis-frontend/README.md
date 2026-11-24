@@ -53,6 +53,13 @@ Now Jarvis connects live to:
 - Safe web navigation with user confirmation
 - Safe local application launching with user confirmation
 
+## Voice and response preferences
+
+- Voice capture starts only after you activate the voice control; JARVIS does not listen in the background.
+- In hands-free mode, the optional wake-word setting requires “JARVIS” at the start of each spoken command.
+- Push-to-talk mode accepts a spoken command without a wake word. Activate the voice control again to finish or cancel capture.
+- English voice options and concise, balanced, or detailed response styles are available in Settings. These preferences are saved in this browser.
+
 ## Development Scripts
 
 ```powershell

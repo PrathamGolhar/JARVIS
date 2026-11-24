@@ -9,7 +9,8 @@ from app.services.ai.factory import get_ai_provider, list_configured_providers
 from app.services.ai.gemini_provider import GeminiProvider
 from app.services.ai.groq_provider import GroqProvider
 from app.services.ai.openai_provider import OpenAIProvider
-from app.services.auth import require_auth
+from app.services.auth import require_auth, verify_credential
+from app.services.confirmation import confirmation_manager
 from app.settings import settings
 
 logger = logging.getLogger("jarvis.api.settings")
@@ -82,7 +83,7 @@ async def update_settings(request: SettingsUpdateRequest) -> SettingsStatusRespo
             detail="Modifying administrative settings is disabled in 'read_only' permission mode.",
         )
 
-    # 2. Permission Mode Validation
+    # 2. Permission Mode Validation & Elevation Protection
     if request.permission_mode is not None:
         valid_modes = {"read_only", "assisted", "full_control"}
         chosen_mode = request.permission_mode.lower().strip()
@@ -91,6 +92,26 @@ async def update_settings(request: SettingsUpdateRequest) -> SettingsStatusRespo
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Invalid permission mode '{request.permission_mode}'. Must be one of: {', '.join(sorted(valid_modes))}.",
             )
+
+        current_mode = getattr(settings, "permission_mode", "assisted")
+        if chosen_mode == "full_control" and current_mode != "full_control":
+            # Explicit re-authentication or confirmation token required for privilege elevation
+            elevated = False
+            if request.master_api_key and verify_credential(request.master_api_key):
+                elevated = True
+            elif request.confirmation_token:
+                try:
+                    confirmation_manager.consume_confirmation(request.confirmation_token, session_id="admin")
+                    elevated = True
+                except ValueError:
+                    elevated = False
+
+            if not elevated:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Privilege elevation to 'full_control' requires explicit re-authentication (provide valid masterApiKey or confirmationToken).",
+                )
+
         settings.permission_mode = chosen_mode
         _persist_env_key("JARVIS_PERMISSION_MODE", chosen_mode)
 
