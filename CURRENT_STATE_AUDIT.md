@@ -1,5 +1,7 @@
 # JARVIS 2.0 — CURRENT STATE AUDIT & TRUTH BASELINE
 
+> **Historical snapshot:** This report records findings from its stated audit date and commit baseline. The canonical frontend path is now `frontend/`; references to `jarvis-frontend/` and other findings are preserved as historical and have not been revalidated.
+
 **Audit Date:** November 24, 2026
 **Auditor:** Principal Software Architect, Senior Full-Stack Engineer, AI Systems & Security Auditor
 **Repository:** `PrathamGolhar/JARVIS`

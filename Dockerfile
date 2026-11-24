@@ -3,9 +3,9 @@
 # Stage 1: Build React Frontend
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
-COPY jarvis-frontend/package*.json ./
+COPY frontend/package*.json ./
 RUN npm ci
-COPY jarvis-frontend/ ./
+COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Python Backend & Runtime Environment

@@ -1,5 +1,7 @@
 # JARVIS 2.0 — FINAL TEST REPORT
 
+> **Historical snapshot:** Test totals and results below apply only to the report's stated run and are not current suite counts. See [TESTING.md](TESTING.md) for current commands.
+
 **Date:** November 24, 2026  
 **Test Suite:** Automated Python Unit, Integration & Regression Tests  
 **Harness:** pytest 8.4.2 (Python 3.13.17)  

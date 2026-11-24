@@ -6,7 +6,7 @@ extracting commonalities, contradictions, methodologies, results, and comparison
 from dataclasses import dataclass, field
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from app.services.ai.factory import get_ai_provider
 
@@ -21,7 +21,11 @@ class ComparisonResult:
     differences: list[str]
     comparison_table: list[dict[str, Any]]
     synthesis_markdown: str
-    confidence: float = 0.95
+    status: Literal["success", "partial_success", "failure"]
+    confidence: float | None = None
+    omitted_documents: list[str] = field(default_factory=list)
+    truncated_documents: list[str] = field(default_factory=list)
+    error: str | None = None
 
 
 class MultiDocumentReasoner:
@@ -33,23 +37,41 @@ class MultiDocumentReasoner:
         documents: list[dict[str, str]],  # [{"filename": "doc1.pdf", "content": "..."}, ...]
         focus_topic: str = "General Comparison",
     ) -> ComparisonResult:
-        if not documents:
+        usable_documents = [
+            document
+            for document in documents
+            if isinstance(document.get("content"), str) and document["content"].strip()
+        ]
+        if len(usable_documents) < 2:
             return ComparisonResult(
                 topic=focus_topic,
                 documents_analyzed=[],
                 commonalities=[],
                 differences=[],
                 comparison_table=[],
-                synthesis_markdown="No documents provided for comparison.",
-                confidence=0.0,
+                synthesis_markdown="",
+                status="failure",
+                error="At least two documents with readable text are required for comparison.",
             )
 
-        provider = get_ai_provider()
-        filenames = [d.get("filename", f"Doc_{i+1}") for i, d in enumerate(documents)]
+        selected_documents = usable_documents[:5]
+        filenames = [
+            document.get("filename") or f"Doc_{index + 1}"
+            for index, document in enumerate(selected_documents)
+        ]
+        omitted_documents = [
+            document.get("filename") or f"Doc_{index + 1}"
+            for index, document in enumerate(usable_documents[5:], start=5)
+        ]
+        truncated_documents = [
+            filename
+            for filename, document in zip(filenames, selected_documents)
+            if len(document["content"]) > 6000
+        ]
 
         combined_text = ""
-        for i, d in enumerate(documents[:5]):  # Process up to 5 documents simultaneously
-            combined_text += f"\n\n=== DOCUMENT {i+1}: {d.get('filename')} ===\n{d.get('content', '')[:6000]}"
+        for i, document in enumerate(selected_documents):
+            combined_text += f"\n\n=== DOCUMENT {i+1}: {filenames[i]} ===\n{document['content'][:6000]}"
 
         system_prompt = (
             "You are JARVIS in MULTI-DOCUMENT REASONING MODE.\n"
@@ -69,6 +91,7 @@ class MultiDocumentReasoner:
         user_prompt = f"Focus Topic: {focus_topic}\n\nDocuments to compare:\n{combined_text}"
 
         try:
+            provider = get_ai_provider()
             res = provider.chat(
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -87,40 +110,45 @@ class MultiDocumentReasoner:
                 raw = raw[:-3]
 
             data = json.loads(raw.strip())
+            if not isinstance(data, dict):
+                raise ValueError("The provider response was not a JSON object.")
+            commonalities = data.get("commonalities")
+            differences = data.get("differences")
+            comparison_table = data.get("comparisonTable")
+            synthesis_markdown = data.get("synthesisMarkdown")
+            if (
+                not isinstance(commonalities, list)
+                or not all(isinstance(item, str) for item in commonalities)
+                or not isinstance(differences, list)
+                or not all(isinstance(item, str) for item in differences)
+                or not isinstance(comparison_table, list)
+                or not all(isinstance(item, dict) for item in comparison_table)
+                or not isinstance(synthesis_markdown, str)
+                or not synthesis_markdown.strip()
+                or not isinstance(data.get("topic", focus_topic), str)
+                or not data.get("topic", focus_topic).strip()
+            ):
+                raise ValueError("The provider response did not contain a complete comparison.")
             return ComparisonResult(
                 topic=data.get("topic", focus_topic),
                 documents_analyzed=filenames,
-                commonalities=data.get("commonalities", []),
-                differences=data.get("differences", []),
-                comparison_table=data.get("comparisonTable", []),
-                synthesis_markdown=data.get("synthesisMarkdown", raw),
-                confidence=0.95,
+                commonalities=commonalities,
+                differences=differences,
+                comparison_table=comparison_table,
+                synthesis_markdown=synthesis_markdown,
+                status="partial_success" if omitted_documents or truncated_documents else "success",
+                omitted_documents=omitted_documents,
+                truncated_documents=truncated_documents,
             )
         except Exception as exc:
-            logger.warning("Multi-document AI comparison fallback: %s", exc)
+            logger.warning("Multi-document AI comparison failed: %s", exc)
             return ComparisonResult(
                 topic=focus_topic,
-                documents_analyzed=filenames,
-                commonalities=[
-                    "All documents address core engineering and academic domain concepts.",
-                    "Consistent foundational theoretical principles observed.",
-                ],
-                differences=[
-                    f"Differences in emphasis and analytical focus across {len(filenames)} files.",
-                    "Variations in practical implementation methodologies.",
-                ],
-                comparison_table=[
-                    {"dimension": "Document Scope", **{fn: "Analyzed material" for fn in filenames}},
-                    {"dimension": "Primary Focus", **{fn: f"Key findings in {fn}" for fn in filenames}},
-                ],
-                synthesis_markdown=(
-                    f"# Comparative Analysis: {focus_topic}\n\n"
-                    f"**Documents Examined**: {', '.join(filenames)}\n\n"
-                    "## 1. Key Commonalities\n"
-                    "- Unified foundational baseline principles.\n"
-                    "- Complementary experimental and conceptual frameworks.\n\n"
-                    "## 2. Key Differences\n"
-                    "- Specific analytical constraints and domain specializations.\n"
-                ),
-                confidence=0.90,
+                documents_analyzed=[],
+                commonalities=[],
+                differences=[],
+                comparison_table=[],
+                synthesis_markdown="",
+                status="failure",
+                error="AI comparison failed; no similarities or differences were produced.",
             )

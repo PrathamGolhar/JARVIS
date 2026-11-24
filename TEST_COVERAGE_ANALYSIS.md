@@ -1,5 +1,7 @@
 # JARVIS — Test Coverage Analysis
 
+> **Historical snapshot:** File counts and coverage claims below describe an earlier test suite and have not been revalidated. See [TESTING.md](TESTING.md) for current validation commands.
+
 **Audit Date:** 2026-11-23  
 **Test Files Found:** 20 test files in `backend/tests/`  
 **Test Runner:** pytest + pytest-asyncio  

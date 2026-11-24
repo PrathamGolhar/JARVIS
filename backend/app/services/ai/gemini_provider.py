@@ -137,7 +137,7 @@ class GeminiProvider(AIProvider):
         data = resp.json()
         candidates = data.get("candidates", [])
         if not candidates:
-            return AIChatResponse(content="I could not produce a response for that request.", model=self.model, provider=self.name)
+            raise RuntimeError("Gemini returned no response candidates.")
 
         first_cand = candidates[0]
         content_obj = first_cand.get("content", {})
@@ -158,6 +158,8 @@ class GeminiProvider(AIProvider):
                 ))
 
         reply_text = "".join(text_pieces).strip()
+        if not reply_text and not tool_calls_extracted:
+            raise RuntimeError("Gemini returned an empty response without tool calls.")
         return AIChatResponse(
             content=reply_text,
             tool_calls=tool_calls_extracted,

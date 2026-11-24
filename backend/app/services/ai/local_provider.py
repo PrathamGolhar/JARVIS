@@ -2,6 +2,7 @@ import json
 import re
 import secrets
 from typing import Any
+from urllib.parse import urlparse
 
 from app.services.ai.base import AIChatResponse, AIProvider, ToolCall
 
@@ -53,21 +54,52 @@ class LocalProvider(AIProvider):
                 data = json.loads(raw_content) if isinstance(raw_content, str) else raw_content
             except Exception:
                 data = {}
+            if not isinstance(data, dict):
+                data = {"ok": False, "error": "The tool returned an unreadable result."}
+
+            if data.get("ok") is False or data.get("error"):
+                error = data.get("error") or "The tool reported failure."
+                trace_id = data.get("traceId")
+                trace_context = f" (trace ID: {trace_id})" if trace_id else ""
+                failure_message = (
+                    f"Web research is temporarily unavailable: {error}"
+                    if tool_name == "web_search"
+                    else f"The {tool_name or 'requested'} tool failed: {error}"
+                )
+                return AIChatResponse(
+                    content=f"{failure_message}{trace_context}",
+                    tool_calls=[],
+                    model="local-rule-engine",
+                    provider=self.name,
+                )
 
             if tool_name == "web_search":
                 if data.get("ok") and data.get("results"):
-                    results = data["results"]
-                    lines = ["Verified results from live web research:"]
+                    results = [
+                        result
+                        for result in data["results"]
+                        if isinstance(result, dict)
+                        and isinstance(result.get("title"), str)
+                        and result["title"].strip()
+                        and urlparse(result.get("url", "")).scheme in {"http", "https"}
+                        and urlparse(result.get("url", "")).netloc
+                    ]
+                    if not results:
+                        return AIChatResponse(
+                            content="Live web search returned no usable source links.",
+                            tool_calls=[],
+                            model="local-rule-engine",
+                            provider=self.name,
+                        )
+                    lines = ["Live web search results (not independently verified):"]
                     result_limit = 3 if response_style == "concise" else 5
                     for idx, r in enumerate(results[:result_limit], start=1):
-                        title = r.get("title", "Source")
-                        url = r.get("url", "")
+                        title = r["title"]
+                        url = r["url"]
                         snippet = r.get("snippet", "").strip()
                         domain = r.get("domain", "")
                         source_label = f" *({domain})*" if domain else ""
                         lines.append(f"{idx}. **{title}**{source_label}\n   {snippet}\n   Source: {url}")
-                    if response_style != "concise":
-                        lines.append("The results are grounded in the cited sources.")
                     reply = "\n\n".join(lines)
                 else:
                     reply = (
@@ -82,7 +114,21 @@ class LocalProvider(AIProvider):
                 )
 
             if tool_name == "calculator":
-                val = data.get("result") or data.get("value") or data.get("expression")
+                if data.get("ok") is not True:
+                    return AIChatResponse(
+                        content="The calculation result could not be verified.",
+                        tool_calls=[],
+                        model="local-rule-engine",
+                        provider=self.name,
+                    )
+                val = data.get("result", data.get("value"))
+                if val is None:
+                    return AIChatResponse(
+                        content="The calculator did not return a result that can be verified.",
+                        tool_calls=[],
+                        model="local-rule-engine",
+                        provider=self.name,
+                    )
                 expression = data.get("expression")
                 reply = (
                     f"The result of {expression} is **{val}**."
@@ -97,10 +143,15 @@ class LocalProvider(AIProvider):
                 )
 
             if tool_name == "get_weather":
-                if data.get("ok"):
+                if (
+                    data.get("ok") is True
+                    and data.get("location")
+                    and isinstance(data.get("temperature"), (int, float))
+                    and data.get("conditions")
+                ):
                     loc = data.get("location", "the requested area")
                     temp = data.get("temperature", "N/A")
-                    cond = data.get("conditions", "Clear")
+                    cond = data["conditions"]
                     reply = (
                         f"Current weather in {loc}: {temp}°C, {cond}."
                         if response_style == "concise"
@@ -113,21 +164,40 @@ class LocalProvider(AIProvider):
                         provider=self.name,
                     )
                 return AIChatResponse(
-                    content="The live weather service is temporarily unavailable.",
+                    content="The live weather service returned no verifiable weather conditions.",
                     tool_calls=[],
                     model="local-rule-engine",
                     provider=self.name,
                 )
 
             if tool_name == "system_diagnostics":
+                if data.get("ok") is not True or not any(
+                    key in data for key in ("cpu_usage_percent", "ram_usage_percent", "disk_free_gb")
+                ):
+                    return AIChatResponse(
+                        content="System diagnostics did not return verifiable hardware metrics.",
+                        tool_calls=[],
+                        model="local-rule-engine",
+                        provider=self.name,
+                    )
+                reply = (
+                    "Current system metrics: "
+                    f"CPU {data.get('cpu_usage_percent', 'unavailable')}%, "
+                    f"RAM {data.get('ram_usage_percent', 'unavailable')}%, "
+                    f"free disk {data.get('disk_free_gb', 'unavailable')} GB."
+                )
                 return AIChatResponse(
-                    content="System telemetry reports nominal hardware status.",
+                    content=reply,
                     tool_calls=[],
                     model="local-rule-engine",
                     provider=self.name,
                 )
 
-            msg = data.get("message") or f"Executed tool '{tool_name}' successfully."
+            msg = data.get("message")
+            if data.get("ok") is not True:
+                msg = f"The {tool_name or 'requested'} tool returned data without an explicit success status; its outcome is unverified."
+            elif not msg:
+                msg = f"The {tool_name or 'requested'} tool returned a successful result."
             return AIChatResponse(
                 content=str(msg),
                 tool_calls=[],
@@ -199,7 +269,10 @@ class LocalProvider(AIProvider):
         elif "thank" in low:
             reply = "You're welcome."
         else:
-            reply = f"I received your request about '{user_message[:50]}'. The local assistant is ready to help."
+            reply = (
+                "Offline rule-based mode cannot provide general-purpose reasoning for this request. "
+                "It can handle supported deterministic tools, but no local general-purpose language model is active."
+            )
 
         return AIChatResponse(
             content=reply,

@@ -6,8 +6,8 @@ Follow this step-by-step guide to configure and run JARVIS on Windows, Linux, or
 
 ## 1. Prerequisites
 
-- **Python**: Version 3.11 or newer (Python 3.13 tested)
-- **Node.js**: Version 18.0.0 or newer with npm
+- **Python**: Version 3.11 or newer (CI currently runs Python 3.11)
+- **Node.js**: Version 20 or newer with npm
 - **Git**: For source version control
 - Optional: Virtual environment (`venv`) or `uv`
 
@@ -31,14 +31,14 @@ python -m venv venv
 # Linux/macOS:
 source venv/bin/activate
 
-# Install requirements
-pip install -r requirements.txt
+# Install runtime and development/test requirements
+pip install -r requirements-dev.txt
 ```
 
 ### 2.2 Frontend Setup
 ```bash
-cd ../jarvis-frontend
-npm install
+cd ../frontend
+npm ci
 ```
 
 ---
@@ -52,18 +52,18 @@ cd ../backend
 cp .env.example .env
 ```
 
-Configure your preferred API keys:
+Set a strong API key and configure any cloud providers you intend to use:
 ```ini
+JARVIS_API_KEY=replace_with_a_long_random_secret
 JARVIS_AI_PROVIDER=auto
 GOOGLE_API_KEY=your_gemini_api_key_here
 GROQ_API_KEY=your_groq_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
 ANTHROPIC_API_KEY=
-ELEVENLABS_API_KEY=
 JARVIS_PERMISSION_MODE=assisted
 ```
 
-*Note: Even without cloud API keys, JARVIS will operate using its offline Local Rule Engine.*
+*Note: Without cloud API keys, JARVIS can use `LocalProvider`, a rule-based fallback rather than a general-purpose offline language model. If `JARVIS_API_KEY` is unset, the backend generates an ephemeral key and logs it; configure a key before exposing the service.*
 
 ---
 
@@ -78,11 +78,11 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload
 ### Start Frontend
 In a second terminal:
 ```bash
-cd jarvis-frontend
+cd frontend
 npm run dev
 ```
 
-Open `http://localhost:1420` in your browser.
+Open `http://localhost:1420` in your browser. The backend API is at `http://127.0.0.1:8765`.
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "files": [],
   "references": [
-    { "path": "./jarvis-frontend/tsconfig.app.json" },
-    { "path": "./jarvis-frontend/tsconfig.node.json" }
+    { "path": "./frontend/tsconfig.app.json" },
+    { "path": "./frontend/tsconfig.node.json" }
   ]
 }

@@ -78,7 +78,7 @@ class OutputVerifier:
         """Verify that tool result dictionary represents genuine operational success."""
         if not isinstance(result, dict):
             return False
-        if not result.get("ok", True):
+        if result.get("ok") is not True:
             return False
         if "error" in result and result["error"]:
             return False

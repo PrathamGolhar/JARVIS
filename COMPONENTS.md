@@ -1,5 +1,7 @@
 # JARVIS 2.0 Frontend Component Directory
 
+> **Historical component catalog:** Descriptions below have not been revalidated against the current frontend migration. For current architecture and integration details, use [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md) and inspect `frontend/src/`.
+
 ## 1. Component Catalog
 
 | Component | Category | Path | Description |

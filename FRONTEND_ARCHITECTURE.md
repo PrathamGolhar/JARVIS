@@ -1,107 +1,45 @@
-# JARVIS 2.0 Frontend Architecture
+# JARVIS Frontend Architecture
 
-## 1. Executive Summary
+The current frontend is a React 19, TypeScript, and Vite application in `frontend/`. It uses local React state and typed API modules; this document describes live source behavior rather than aspirational workspace or DAG features.
 
-The **JARVIS 2.0 Next-Generation Frontend** is an ultra-modern, reactive, multi-workspace AI command center designed for seamless human-AI interaction. Built with **React 19, TypeScript, and Vite**, it integrates 3D voice-reactive holographic visualizations, audio digital signal processing (DSP), voice activity detection (VAD), live multi-subsystem telemetry, and a Directed Acyclic Graph (DAG) task execution pipeline.
-
----
-
-## 2. Architectural Pillars
+## Runtime shape
 
 ```text
-                               +------------------------------------------+
-                               |           JARVIS Web Shell               |
-                               |  (React 19 + TypeScript + CSS Modules)   |
-                               +------------------------------------------+
-                                                    |
-             +--------------------------------------+--------------------------------------+
-             |                                      |                                      |
-             v                                      v                                      v
-+--------------------------+          +--------------------------+          +--------------------------+
-|   Navigation & Routing   |          |  Interactive Workspaces  |          |   Audio & Visual Core    |
-| - TopNavigationBar       |          | - DashboardWorkspace     |          | - HolographicGlobe (3D)  |
-| - NavigationSidebar      |          | - ResearchWorkspace      |          | - AmbientHud             |
-| - CommandPalette (Ctrl+K)|          | - CodeWorkspace          |          | - Audio DSP & VAD        |
-| - QuickActionsBar        |          | - IntegrationsWorkspace  |          | - Voice Synthesis (Edge) |
-+--------------------------+          | - StudyMode / Files / ...|          +--------------------------+
-                                      +--------------------------+
-                                                    |
-                                                    v
-                               +------------------------------------------+
-                               |          FastAPI Backend (8765)          |
-                               | ModelRouter / TaskGraph / EventBus / RAG |
-                               +------------------------------------------+
+frontend/src/main.tsx → App.tsx
+                         ├── api/* → authenticated HTTP/JSON requests
+                         ├── components/* → HUD, panels, dialogs, file drawer
+                         └── services/* → speech, permissions, visual controller
+                                      │
+                                      ▼
+                         FastAPI backend (default local API port 8765)
 ```
 
-### 2.1 Technology Stack
-- **Framework**: React 19 (`react`, `react-dom`)
-- **Language**: TypeScript 5.6+ with strict type checking
-- **Bundler & Build Tool**: Vite 6.4+
-- **Styling**: Vanilla CSS with custom glassmorphism design tokens (`src/config/designTokens.ts`, `src/styles/global.css`)
-- **Speech & Audio**: Web Speech API, Web Audio API DSP AnalyserNode, Microsoft Edge TTS neural speech
-- **Graphics**: Canvas 2D / WebGL 3D Holographic Particle Globe with voice audio-reactivity
+The Vite development server listens on port `1420` and proxies `/api` to the backend. `VITE_API_BASE_URL` can override the default `/api`. The default Docker build bundles the frontend into the backend image and serves it from port `8765`.
 
----
+## Source layout
 
-## 3. Directory Layout & Module Structure
+- `src/api/`: clients for chat, files, coding, generation, memory, projects, research, settings, speech, study, system, and reminders.
+- `src/components/`: reusable UI, including `HolographicGlobe`, `AmbientHud`, chat, upload, and workspace panels.
+- `src/services/`: `speechManager.ts`, `permissionManager.ts`, and `aiVisualController.ts`.
+- `src/config/` and `src/styles/`: design tokens and global CSS.
+- `src/App.tsx`: application state, view selection, chat submission, and interaction wiring.
 
-```
-jarvis-frontend/
-├── src/
-│   ├── api/                     # Backend API client bindings
-│   │   ├── automation.ts        # Scheduled crons & automation tasks
-│   │   ├── capabilities.ts      # Subsystem capability declarations
-│   │   ├── chat.ts              # Conversational DAG & tool execution stream
-│   │   ├── client.ts            # Base HTTP client with auto-reconnection
-│   │   ├── coding.ts            # Python sandbox & AST analyzer
-│   │   ├── diagnostics.ts       # System hardware & service metrics
-│   │   ├── files.ts             # File upload, parsing, and retrieval
-│   │   ├── generation.ts        # Document & presentation generation
-│   │   ├── memory.ts            # Long-term knowledge base inspection
-│   │   ├── projects.ts          # Project workspaces & task tracker
-│   │   ├── research.ts          # Deep web research & citations
-│   │   ├── settings.ts          # Voice, wakeword, and preferences
-│   │   ├── speech.ts            # Neural TTS speech synthesizer
-│   │   ├── study.ts             # Study notes, MCQs, and flashcards
-│   │   └── system.ts            # Core liveness and health probes
-│   ├── assets/                  # Ambient background video & media
-│   ├── components/              # Reusable futuristic UI components
-│   │   ├── AmbientHud.tsx       # Subtle futuristic ambient grid overlay
-│   │   ├── CodeBlock.tsx        # Syntax-highlighted code with run button
-│   │   ├── CommandPaletteModal.tsx # Ctrl+K spotlight command search
-│   │   ├── DashboardWorkspace.tsx  # At-a-glance system metrics & agent matrix
-│   │   ├── ResearchWorkspace.tsx   # DuckDuckGo multi-source search & citations
-│   │   ├── CodeWorkspace.tsx       # Sandbox runtime, AST refactoring & tests
-│   │   ├── IntegrationsWorkspace.tsx # Subsystem health matrix & ping probes
-│   │   ├── HolographicGlobe.tsx    # 3D audio-reactive particle sphere
-│   │   ├── NavigationSidebar.tsx   # Collapsible 12-item workspace sidebar
-│   │   ├── TopNavigationBar.tsx    # Live clock, telemetry, mode pills & hotkeys
-│   │   ├── ToastNotificationSystem.tsx # Floating sci-fi HUD notifications
-│   │   └── ...
-│   ├── config/
-│   │   └── designTokens.ts      # Colors, typography, glassmorphism, z-index
-│   ├── services/
-│   │   ├── aiVisualController.ts # Visual state manager & TTS audio synchronizer
-│   │   ├── permissionManager.ts  # Diagnostic logs & capability tracking
-│   │   └── speechManager.ts      # Voice Activity Detection (VAD) & speech recognition
-│   ├── styles/
-│   │   └── global.css           # Futuristic glassmorphism tokens, HUD classes
-│   ├── App.tsx                  # Root application orchestrator
-│   └── main.tsx                 # React DOM mount point
-```
+The package scripts are defined by `frontend/package.json`. `npm run lint` is currently a TypeScript check, not ESLint. `@types/three` is a development/type dependency; `three` is the runtime package.
 
----
+## Chat and file flow
 
-## 4. State Management & Data Flow
+`App.tsx` calls `sendChatMessage()` in `src/api/chat.ts`, which posts JSON to `/api/chat`. Responses are rendered with their execution status, tool events, citations, pending action, plan steps, and generated-file metadata. Requests are not streamed over SSE or WebSocket.
 
-1. **Reactive UI State**:
-   - Central view routing is driven by `currentView` in `App.tsx` (`'core' | 'dashboard' | 'research' | 'coding' | 'integrations' | ...`).
-   - Modals and drawers (`StudyModePanel`, `GeneratedFilesDrawer`, `ProjectManagerModal`, `MemoryInspectorModal`, `AutomationModal`, `SettingsModal`, `DeveloperDiagnosticsOverlay`, `CommandPaletteModal`) open on-demand.
-2. **Audio & Voice Flow**:
-   - `speechManager` captures microphone input with continuous hands-free VAD or push-to-talk.
-   - Spoken transcripts stream live to the UI via `interimTranscript` bubbles.
-   - When speech concludes, `askJarvis()` is invoked.
-   - `requestSpeech()` fetches neural speech bytes from `/api/speech/synthesize`, piping the audio element through `aiVisualController.connectTTSAudio()` to modulate the 3D Holographic Globe in real time.
-3. **DAG Plan Execution**:
-   - Assistant responses with multi-step workflows deliver `planSteps` objects rendered via `PlanExecutionIndicator`.
-   - Tool events (`web_search`, `python_sandbox`, `math_eval`) display in the `ActivityMonitor`.
+`FileUploadDrawer` uploads to `/api/files/upload`, then invokes a callback with a filename and extracted-text preview. The UI does not forward the returned `fileId` as `imageIds` in chat. The backend accepts image IDs through the API, but the current UI flow therefore does not provide image bytes to the model. Image upload itself does not run OCR or index image text.
+
+## Voice and visuals
+
+`speechManager.ts` owns browser speech recognition/microphone interactions and voice state. Audio can also be sent to the backend transcription endpoint, which currently uses Groq. `src/api/speech.ts` requests Edge TTS audio from `/api/tts`; browser speech synthesis can be used as a fallback by the UI. `aiVisualController.ts` coordinates visual state with audio, and `HolographicGlobe` supplies the Three.js HUD visualization.
+
+The frontend does not contain a separate `speechRecognition.ts` service. Wake-word and background listening claims should be checked against the current `speechManager.ts` implementation and user interaction; do not describe the app as continuously listening by default.
+
+## Current limitations
+
+- `VITE_DEMO_MODE` is not read by the application; `DEMO_MODE` is hard-coded to `false`. Demo/mock behavior is not a supported startup mode.
+- UI plan steps are display data returned by the API, not a frontend-managed dependency DAG.
+- An image upload callback currently submits extracted text/preview as a prompt; it does not submit image IDs to the multimodal chat API.

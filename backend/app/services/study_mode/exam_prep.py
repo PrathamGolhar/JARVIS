@@ -55,13 +55,30 @@ def generate_exam_mcqs(
             content = content[:-3]
 
         items = json.loads(content.strip())
+        if not isinstance(items, list) or len(items) != count:
+            raise ValueError(f"The provider response must contain exactly {count} questions.")
         results = []
         for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise ValueError(f"Question {i + 1} is not a JSON object.")
+            question = item.get("question")
+            options = item.get("options")
+            correct_option_index = item.get("correctOptionIndex")
+            if (
+                not isinstance(question, str)
+                or not question.strip()
+                or not isinstance(options, list)
+                or len(options) < 2
+                or not all(isinstance(option, str) and option.strip() for option in options)
+                or not isinstance(correct_option_index, int)
+                or not 0 <= correct_option_index < len(options)
+            ):
+                raise ValueError(f"Question {i + 1} is incomplete or invalid.")
             results.append(MCQItem(
                 id=item.get("id", i + 1),
-                question=item.get("question", f"Question {i+1}"),
-                options=item.get("options", ["Option A", "Option B", "Option C", "Option D"]),
-                correctOptionIndex=int(item.get("correctOptionIndex", 0)),
+                question=question,
+                options=options,
+                correctOptionIndex=correct_option_index,
                 difficulty=item.get("difficulty", difficulty),
                 hint=item.get("hint", ""),
                 solution=item.get("solution", ""),
@@ -69,21 +86,5 @@ def generate_exam_mcqs(
             ))
         return results
     except Exception as exc:
-        logger.warning("MCQ generation fallback: %s", exc)
-        return [
-            MCQItem(
-                id=1,
-                question=f"Regarding {topic_or_text[:50]}, which statement represents best practice?",
-                options=[
-                    "Implement verified principles with systematic error checks",
-                    "Execute operations blindly without testing",
-                    "Ignore theoretical boundaries",
-                    "Disregard standard equations",
-                ],
-                correctOptionIndex=0,
-                difficulty=difficulty,
-                hint="Recall the core safety and engineering guidelines.",
-                solution="Implement verified principles with systematic error checks",
-                explanation="Systematic testing and boundary verification ensure rigorous execution.",
-            )
-        ]
+        logger.warning("MCQ generation failed: %s", exc)
+        raise RuntimeError("MCQ generation failed; no fallback questions were generated.") from exc

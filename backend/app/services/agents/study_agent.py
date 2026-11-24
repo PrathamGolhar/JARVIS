@@ -2,6 +2,7 @@ import logging
 from typing import Any
 
 from app.schemas import StudyNotesResponse
+from app.services.agents.verifier import output_verifier
 from app.services.document_generation.docx_generator import generate_docx_document
 from app.services.document_generation.pdf_generator import generate_pdf_document
 from app.services.study_mode.notes_generator import generate_structured_study_notes
@@ -37,6 +38,9 @@ class StudyAgent:
             subtitle=f"Subject: {notes_res.subject}  •  Prepared by JARVIS",
             subject=notes_res.subject,
         )
+        verification = output_verifier.verify_generated_file(pdf_path, expected_extension=".pdf")
+        if not verification.get("verified"):
+            raise RuntimeError(f"Study notes PDF verification failed: {verification.get('reason')}")
         generated_files.append({
             "id": pdf_path.name,
             "filename": pdf_path.name,
@@ -52,6 +56,9 @@ class StudyAgent:
                 content_markdown=notes_res.detailed_notes_markdown,
                 subtitle=f"Subject: {notes_res.subject}",
             )
+            verification = output_verifier.verify_generated_file(docx_path, expected_extension=".docx")
+            if not verification.get("verified"):
+                raise RuntimeError(f"Study notes DOCX verification failed: {verification.get('reason')}")
             generated_files.append({
                 "id": docx_path.name,
                 "filename": docx_path.name,

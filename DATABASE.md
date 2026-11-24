@@ -1,103 +1,42 @@
-# JARVIS 2.0 Database Architecture & Data Models
+# JARVIS Persistence and Data Model
 
-JARVIS 2.0 utilizes a resilient relational database model (SQLite for development / embedded deployments, with full migration capability to PostgreSQL in enterprise production environments).
+This document describes the stores currently used by the application. There is no implemented PostgreSQL migration path or ORM schema.
 
----
+## Storage locations
 
-## 1. Entity-Relationship Overview
+`backend/app/settings.py` creates `backend/data/` by default. In the Docker image, the corresponding persistent volume is mounted at `/app/data`.
 
-```text
-+----------------+          +-------------------+          +-------------------+
-|      User      | 1 ---- * |   Conversation    | 1 ---- * |      Message      |
-+----------------+          +-------------------+          +-------------------+
-        |                             |
-        | 1                           | 1
-        |                             |
-        v *                           v *
-+----------------+          +-------------------+          +-------------------+
-|    Project     | 1 ---- * |       Task        | 1 ---- * |     TaskStep      |
-+----------------+          +-------------------+          +-------------------+
-        |
-        | 1
-        v *
-+----------------+          +-------------------+          +-------------------+
-|  ProjectFile   |          |      Memory       |          |   GeneratedFile   |
-+----------------+          +-------------------+          +-------------------+
-```
+| Data | Current store | Location |
+| --- | --- | --- |
+| Conversation turns, session ownership, generated-artifact metadata, user memories, memory history | SQLite | `data/jarvis_memory.db` |
+| Uploaded document metadata, extracted chunks, full-text index | SQLite with FTS5 | `data/jarvis_documents.db` |
+| Projects and project tasks | JSON files | `data/projects/proj_<id>.json` |
+| Reminders | JSON file | `data/reminders.json` |
+| Uploaded and generated file bytes | Filesystem | `data/uploads/` and `data/generated/` |
 
----
+Custom upload and generated-file directories can be set with `JARVIS_UPLOAD_ROOT` and `JARVIS_GENERATED_ROOT`. Projects, reminders, and the two SQLite stores continue to use `settings.data_dir`.
 
-## 2. Core Tables & Schemas
+## SQLite tables
 
-### 2.1 `messages` (Short-Term Conversational Memory)
-Stores granular interaction history per session.
-```sql
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system', 'tool')),
-    content TEXT NOT NULL,
-    tool_name TEXT,
-    tool_call_id TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-```
+`jarvis_memory.db` currently creates:
 
-### 2.2 `memories` (Long-Term Semantic & Key/Value Knowledge)
-Retains user preferences, project context, and user-approved facts across sessions.
-```sql
-CREATE TABLE IF NOT EXISTS memories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    key TEXT UNIQUE NOT NULL,
-    category TEXT NOT NULL CHECK(category IN ('preference', 'fact', 'workflow', 'project', 'instruction')),
-    value TEXT NOT NULL,
-    confidence REAL DEFAULT 1.0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
-```
+- `messages`: session-scoped turns, role, content, and optional tool metadata.
+- `sessions`: session ID, owner ID, and timestamps.
+- `artifacts`: generated-file ownership and session metadata.
+- `user_memories`: owner-scoped key/value facts with category, provenance, source, confidence, and timestamps.
+- `memory_history`: history of changes to user memories.
+- `memory_migrations`: applied memory migration markers.
 
-### 2.3 `projects` & `project_tasks`
-Provides dedicated workspace state, tracking milestones, linked artifacts, and task lists.
-```sql
-CREATE TABLE IF NOT EXISTS projects (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+`jarvis_documents.db` currently creates:
 
-CREATE TABLE IF NOT EXISTS project_tasks (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('todo', 'in_progress', 'completed', 'cancelled')),
-    due_date DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_project_tasks_pid ON project_tasks(project_id);
-```
+- `documents`: file ID, filename, content hash, chunk/word counts, owner/session/project scope, and timestamp.
+- `document_chunks`: extracted text, chunk index, and scope metadata.
+- `chunks_fts`: SQLite FTS5 index associated with document chunks.
 
-### 2.4 `reminders` (Scheduled Workflows & Automation)
-Stores time-based alarms, cron automation schedules, and recurrent tasks.
-```sql
-CREATE TABLE IF NOT EXISTS reminders (
-    id TEXT PRIMARY KEY,
-    text TEXT NOT NULL,
-    trigger_at DATETIME NOT NULL,
-    is_recurring BOOLEAN DEFAULT 0,
-    cron_expression TEXT,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'fired', 'cancelled')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-```
+Retrieval uses SQLite full-text search; there is no vector-embedding database. Image uploads are not OCR'd or indexed by the upload route.
 
----
+## Configuration and operational limitations
 
-## 3. Data Migration & Persistence
-- Default Local Path: `./data/jarvis.db`
-- Backup Command: `sqlite3 ./data/jarvis.db ".backup './data/jarvis_backup.db'"`
-- Encryption at Rest: Supported via SQLCipher or Volume-level encryption (LUKS / BitLocker).
+`JARVIS_DATABASE_URL` / `DATABASE_URL` is parsed and reported by settings diagnostics, but the persistence stores construct their paths from `settings.data_dir` and do not use that URL. Do not rely on it to move or migrate data.
+
+Back up the full `backend/data/` directory while the application is stopped or use SQLite's supported backup API for each database. Uploaded/generated files and JSON state are separate from SQLite and must also be retained. No application-level encryption at rest is implemented; protect the data directory using host or volume controls appropriate to the deployment.

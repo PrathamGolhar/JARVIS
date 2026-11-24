@@ -1,5 +1,7 @@
 # JARVIS 2.0 — DEPLOYMENT READINESS CHECKLIST
 
+> **Historical snapshot:** The readiness verdict, test totals, and deployment claims below are not current approval. See [DEPLOYMENT.md](DEPLOYMENT.md) and [SECURITY.md](SECURITY.md) for current limitations.
+
 **Date:** November 24, 2026  
 **Overall Readiness Verdict:** **READY FOR DEPLOYMENT**  
 

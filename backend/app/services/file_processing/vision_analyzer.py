@@ -1,11 +1,10 @@
 import base64
 import logging
 from pathlib import Path
-from typing import Any
+
 import requests
 
 from app.endpoints import GEMINI_API_BASE_URL
-from app.services.ai.factory import get_ai_provider
 from app.settings import settings
 
 logger = logging.getLogger("jarvis.vision")
@@ -15,56 +14,56 @@ def analyze_image_or_diagram(
     image_path: Path | str,
     prompt: str = "Explain this diagram, circuit, or image step-by-step and solve any embedded question.",
 ) -> str:
-    """
-    Analyze image, circuit diagram, screenshot, or chart using Gemini Multimodal or vision capabilities.
-    """
+    """Analyze an image with Gemini Vision; fail explicitly when analysis is unavailable."""
     path = Path(image_path)
-    if not path.exists():
-        return f"Image file '{path}' not found."
+    if not path.is_file():
+        raise FileNotFoundError(f"Image file was not found: {path}")
+    if not settings.google_api_key:
+        raise RuntimeError("Visual analysis is unavailable because no vision provider is configured.")
 
-    # If Gemini API key is configured, invoke Gemini 2.5 Flash with image inline data
-    if settings.google_api_key:
-        try:
-            image_bytes = path.read_bytes()
-            encoded_b64 = base64.b64encode(image_bytes).decode("utf-8")
-            suffix = path.suffix.lower().lstrip(".")
-            mime_type = f"image/{'jpeg' if suffix in ('jpg', 'jpeg') else suffix}"
+    try:
+        image_bytes = path.read_bytes()
+        encoded_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        suffix = path.suffix.lower().lstrip(".")
+        mime_type = f"image/{'jpeg' if suffix in ('jpg', 'jpeg') else suffix}"
+        url = f"{GEMINI_API_BASE_URL}/models/{settings.gemini_model}:generateContent?key={settings.google_api_key}"
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": encoded_b64,
+                            }
+                        },
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 2048,
+            },
+        }
 
-            url = f"{GEMINI_API_BASE_URL}/models/{settings.gemini_model}:generateContent?key={settings.google_api_key}"
-            payload = {
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [
-                            {"text": prompt},
-                            {
-                                "inline_data": {
-                                    "mime_type": mime_type,
-                                    "data": encoded_b64,
-                                }
-                            },
-                        ],
-                    }
-                ],
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "maxOutputTokens": 2048,
-                },
-            }
+        response = requests.post(url, json=payload, timeout=30)
+        if response.status_code != 200:
+            raise RuntimeError(f"Vision provider returned HTTP {response.status_code}.")
 
-            resp = requests.post(url, json=payload, timeout=30)
-            if resp.status_code == 200:
-                data = resp.json()
-                cand = data.get("candidates", [])[0]
-                text_parts = [p.get("text", "") for p in cand.get("content", {}).get("parts", [])]
-                return "".join(text_parts).strip()
-        except Exception as exc:
-            logger.warning("Gemini Vision analysis error: %s", exc)
-
-    # Fallback to local image metadata analysis
-    return (
-        f"Image Analysis for '{path.name}':\n"
-        f"- File format: {path.suffix.upper()}\n"
-        f"- File size: {path.stat().st_size} bytes\n"
-        f"- Status: Image loaded and registered in JARVIS visual memory."
-    )
+        candidates = response.json().get("candidates", [])
+        if not candidates:
+            raise RuntimeError("Vision provider returned no analysis.")
+        parts = candidates[0].get("content", {}).get("parts", [])
+        analysis = "".join(
+            part.get("text", "")
+            for part in parts
+            if isinstance(part.get("text"), str)
+        ).strip()
+        if not analysis:
+            raise RuntimeError("Vision provider returned empty analysis.")
+        return analysis
+    except Exception as exc:
+        logger.warning("Image analysis failed for %s: %s", path.name, exc)
+        raise RuntimeError(f"Image analysis failed for '{path.name}'.") from exc

@@ -1,5 +1,7 @@
 # JARVIS — Architecture Gap Analysis
 
+> **Historical snapshot:** This analysis records findings from its stated audit date. It is not a current implementation specification; verify claims against source and the canonical documentation.
+
 **Audit Date:** 2026-11-23  
 **Reference:** `ARCHITECTURE.md`, `AGENTS.md`, `TOOLS.md`
 

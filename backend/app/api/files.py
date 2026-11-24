@@ -95,7 +95,7 @@ async def upload_document(
     topics = extracted["topics"]
 
     # Index into persistent RAG store for instant semantic search with session isolation
-    rag_store.chunk_and_index(
+    indexed_chunks = rag_store.chunk_and_index(
         file_id=file_id,
         filename=safe_base,
         full_text=text,
@@ -105,6 +105,15 @@ async def upload_document(
     )
 
     preview = text[:400].strip() + ("..." if len(text) > 400 else "")
+    if indexed_chunks:
+        message = f"Document '{safe_base}' was extracted and indexed into searchable memory."
+    elif ext in {".png", ".jpg", ".jpeg", ".webp"}:
+        message = (
+            f"Image '{safe_base}' was uploaded, but OCR and searchable text indexing were not performed. "
+            "Visual understanding requires an image-capable chat provider."
+        )
+    else:
+        message = f"File '{safe_base}' was uploaded, but no searchable text was extracted."
 
     return FileUploadResponse(
         ok=True,
@@ -115,7 +124,7 @@ async def upload_document(
         extractedTextPreview=preview,
         totalPagesOrLines=total_units,
         detectedTopics=topics,
-        message=f"Document '{safe_base}' analyzed and indexed into RAG memory successfully.",
+        message=message,
     )
 
 

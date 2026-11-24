@@ -1,5 +1,7 @@
 # JARVIS 2.0 — IMPLEMENTATION & REMEDIATION ROADMAP
 
+> **Historical planning snapshot:** This roadmap records recommendations from its stated audit date. The canonical frontend path is now `frontend/`; references to `jarvis-frontend/` and other recommendations are preserved as historical and have not been revalidated.
+
 **Audit Date:** November 24, 2026
 **Auditor:** Principal Software Architect & Release Engineer
 

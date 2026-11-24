@@ -321,7 +321,7 @@ async def _execute_tool_batch(
     return results, events, {"graph": graph_result}
 
 
-def _verified_citations(tool_name: str, result: dict[str, Any]) -> list[dict[str, str]]:
+def _valid_citations(tool_name: str, result: dict[str, Any]) -> list[dict[str, str]]:
     candidates = result.get("results", []) if tool_name == "web_search" else result.get("citations", [])
     citations: list[dict[str, str]] = []
     for item in candidates:
@@ -695,7 +695,7 @@ async def _run_orchestration_once(
                             "verified": False,
                             "reason": "Unsafe generated filename.",
                         }
-                citations.extend(_verified_citations(event["toolName"], result))
+                citations.extend(_valid_citations(event["toolName"], result))
 
         for call in calls:
             result = results.get(call.id, {"ok": False, "error": "Tool execution failed or was skipped."})

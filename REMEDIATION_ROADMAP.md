@@ -1,5 +1,7 @@
 # JARVIS — Remediation Roadmap
 
+> **Historical planning snapshot:** Recommendations and status below have not been reconciled with the current workspace. Use current source and canonical documentation for implementation decisions.
+
 **Audit commit:** `6b00368`  
 **Generated:** 2026-11-23  
 **Cross-references:** `AUDIT_REPORT.md`, `SECURITY_FINDINGS.md`, `BUG_BACKLOG.md`

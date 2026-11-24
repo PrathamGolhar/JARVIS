@@ -26,40 +26,24 @@ Send conversational or complex goal instructions.
   ```json
   {
     "sessionId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-    "reply": "I have analyzed your document and synthesized notes with 20 exam questions.",
+    "reply": "<assistant response text>",
     "mode": "study",
-    "executionStatus": "success",
+    "executionStatus": "unverified",
     "verification": {
-      "status": "success",
-      "toolCallsRequested": 1,
-      "toolsExecuted": 1,
-      "toolsVerified": 1,
-      "sourcesVerified": 0,
-      "dependentTasksCompleted": true,
+      "status": "unverified",
       "incomplete": []
     },
-    "turnsRetained": 4,
+    "turnsRetained": 0,
     "citations": [],
     "toolEvents": [],
-    "planSteps": [
-      { "stepNumber": 1, "title": "Extract and understand academic material", "status": "completed" },
-      { "stepNumber": 2, "title": "Generate practice questions & solution breakdown", "status": "completed" }
-    ],
+    "planSteps": [],
     "pendingAction": null,
-    "generatedFiles": [
-      {
-        "id": "Notes.pdf",
-        "filename": "Notes.pdf",
-        "fileType": "pdf",
-        "sizeBytes": 14200,
-        "downloadUrl": "/api/files/download/Notes.pdf"
-      }
-    ]
+    "generatedFiles": []
   }
   ```
 - `providerOverride` can select `auto`, `gemini`, `groq`, `openai`, `anthropic`, or `local`; provider failover remains enabled for cloud providers.
 - `responseStyle` accepts `concise`, `balanced`, or `detailed`; the default is `balanced`. JARVIS responds in English with a calm, professional, natural tone.
-- `imageIds` accepts up to four image file IDs returned by `POST /api/files/upload`. The request routes only to vision-capable providers.
+- `imageIds` accepts up to four image file IDs returned by `POST /api/files/upload`. The request routes only to vision-capable providers. Upload does not OCR or index images, and the current frontend upload flow does not pass image IDs to chat; this capability is currently available only to API clients that supply `imageIds`.
 - `idempotencyKey` (or the `Idempotency-Key` header) makes retries of the same session request return the original result without repeating tool side effects. Reusing the key for different request content returns `409`.
 - `executionStatus` distinguishes `success`, `partial_success`, `failure`, and `unverified`; a model response alone does not mark tool-backed work successful.
 
@@ -68,9 +52,10 @@ Send conversational or complex goal instructions.
 ## 2. File Processing & Downloads
 
 ### `POST /api/files/upload`
-Upload a document or image (`PDF`, `DOCX`, `PPTX`, `XLSX`, `CSV`, `JSON`, `TXT`, `Code`, `Image`).
+Upload a supported document, code file, or image (`PDF`, `DOCX`, `PPTX`, `XLSX`, `CSV`, `JSON`, `TXT`, supported code extensions, `PNG`, `JPG`, `WEBP`).
 - **Form Data**: `file: File`, `session_id: string (optional)`, `project_id: string (optional)`
 - Uploaded documents are scoped to the authenticated principal and, when provided, its session/project.
+- Text-capable uploads may be extracted and indexed. Images are stored, but the upload route explicitly does not OCR or index them.
 - **Response**: `FileUploadResponse`
 
 ### `GET /api/files/generated`
@@ -125,8 +110,10 @@ Delete a file from the workspace cache.
 ## 5. Deep Web Research
 
 ### `POST /api/research/deep`
-- **Request Body**: `{ "query": "Latest advances in solid state batteries", "depth": "deep", "generateDocument": "pdf" }`
-- **Response**: `ResearchResponse` with summary, markdown findings, and verified citations.
+- **Request Body**: `{ "query": "Latest advances in solid state batteries", "depth": "deep", "generate_document": "pdf" }`
+- **Response**: `ResearchResponse` includes `status` (`success`, `partial_success`, `failure`, or `unverified`), `synthesisStatus` (`success`, `failure`, or `not_attempted`), `sourceStatus` (`none`, `search_results`, or `page_content_retrieved`), and `documentStatus` (`not_requested`, `generated`, `not_generated`, or `unsupported`).
+- Citation links originate from search results. Retrieved page content is reported separately and is not an independent fact-check; citations must not be described as verified sources.
+- PDF export is supported. A requested unsupported document format is returned as `partial_success` with `documentStatus: "unsupported"` and no download URL.
 
 ---
 
@@ -138,7 +125,7 @@ Delete a file from the workspace cache.
 
 ### `POST /api/code/analyze`
 - **Request Body**: `{ "code": "def foo(): ...", "language": "python", "task": "debug" }`
-- **Response**: `CodeAnalysisResponse` with fixed code and unit tests.
+- **Response**: `CodeAnalysisResponse` on successful analysis. Provider errors or incomplete output return an error; no placeholder analysis or test result is generated.
 
 ---
 

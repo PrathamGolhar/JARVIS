@@ -9,7 +9,7 @@ Write-Host "=========================================" -ForegroundColor Cyan
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $backendDir  = Join-Path $root "backend"
-$frontendDir = Join-Path $root "jarvis-frontend"
+$frontendDir = Join-Path $root "frontend"
 
 # Resolve Python: prefer backend venv -> root venv -> system Python
 $backendVenvPy = Join-Path $backendDir ".venv\Scripts\python.exe"

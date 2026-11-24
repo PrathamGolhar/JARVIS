@@ -1,98 +1,56 @@
-# JARVIS Architecture & Technical Blueprint
+# JARVIS Architecture
 
-This document details the system design, agent orchestration, data flow pipelines, and security boundaries of the JARVIS personal AI assistant.
+This is the canonical, source-checked overview of the current implementation. For endpoint contracts, see [API.md](API.md); for storage details, see [DATABASE.md](DATABASE.md). Historical audits and roadmaps are not current implementation specifications.
 
----
-
-## 1. High-Level Architecture Diagram
+## Runtime shape
 
 ```text
-                                  +---------------------------------------+
-                                  |         JARVIS HUD FRONTEND           |
-                                  |    (React 19 + TypeScript + Vite)     |
-                                  +---------------------------------------+
-                                           |                     |
-                                    REST / JSON            Audio Streaming (Edge-TTS)
-                                           |                     |
-                                           v                     v
-+-----------------------------------------------------------------------------------------------------+
-|                                          FASTAPI BACKEND CORE                                       |
-|                                                                                                     |
-|  +-----------------------+     +------------------------+     +----------------------------------+  |
-|  |     INTENT PLANNER    | --> |    ORCHESTRATOR & AGENTS| --> |      VERIFICATION SYSTEM         |  |
-|  | (Detect & Multi-Step) |     |  (Study, Research, Code)|     | (Integrity, Output Validation)   |  |
-|  +-----------------------+     +------------------------+     +----------------------------------+  |
-|              |                              |                                   |                   |
-|              v                              v                                   v                   |
-|  +-----------------------+     +------------------------+     +----------------------------------+  |
-|  |  MULTI-PROVIDER AI    |     |      TOOL REGISTRY     |     |       DOCUMENT GENERATORS        |  |
-|  | Gemini / Groq / OpenAI|     | Web, Calc, Sandbox, DB |     |   PDF / PPTX / DOCX / XLSX       |  |
-|  +-----------------------+     +------------------------+     +----------------------------------+  |
-|              |                              |                                   |                   |
-|              v                              v                                   v                   |
-|  +-----------------------+     +------------------------+     +----------------------------------+  |
-|  |   2-LEVEL MEMORY      |     |  LOCAL SANDBOX ENGINE  |     |      UNIVERSAL EXTRACTOR         |  |
-|  | SQLite Sessions & RAG |     | Isolated Python Runtime|     | PDF, OCR, Office, Code, Vision   |  |
-|  +-----------------------+     +------------------------+     +----------------------------------+  |
-+-----------------------------------------------------------------------------------------------------+
+React/Vite frontend (frontend/)
+        │ authenticated HTTP/JSON
+        ▼
+FastAPI application (backend/app/main.py)
+        ├── Chat API → orchestrator
+        │              ├── intent/mode planner
+        │              ├── SQLite conversation and user memory
+        │              ├── SQLite FTS5 document retrieval
+        │              ├── ModelRouter → provider factory/failover
+        │              └── registered chat tools
+        │                    ├── capability policy and confirmation
+        │                    └── execution → result/file verification
+        ├── Separate APIs: files, research, coding, study, projects,
+        │                  reminders, settings, speech, diagnostics
+        └── SQLite stores + JSON project/reminder files
 ```
 
----
+The browser uses REST requests, not a streaming tool-event connection. The chat response contains the final reply, status, tool events, citations, plan steps, and generated-file metadata.
 
-## 2. Operational Pipeline
+## Chat request path
 
-Every command processed by JARVIS follows the strict 6-stage lifecycle:
+`POST /api/chat` validates session and principal ownership, then calls `run_orchestration_async`. The orchestrator detects intent/mode, searches document RAG and persistent memory, selects a provider with `ModelRouter`, and sends the assembled context to the provider. Chat tools are defined in `app/services/tools/registry.py`; permission decisions come from `app/services/permissions.py`. Pending actions require a session-bound confirmation before execution. Tool-backed work is reported with execution and verification status; a model response by itself is not proof that an external operation succeeded.
 
-```text
-[ LISTEN ]     Capture speech via Web Speech API or microphone audio upload.
-    │
-    ▼
-[ UNDERSTAND ] Extract textual intent, user preferences, temporal context, and active project state.
-    │
-    ▼
-[ PLAN ]       Construct a discrete step-by-step ExecutionPlan with required sub-agents & tools.
-    │
-    ▼
-[ EXECUTE ]    Invoke model and execute registered tools (web search, math, file analysis, sandbox).
-    │
-    ▼
-[ VERIFY ]     Validate file existence, non-zero byte size, syntax accuracy, and calculation correctness.
-    │
-    ▼
-[ RESPOND ]    Stream neural voice response and deliver interactive widgets & downloadable artifacts.
-```
+`TaskGraph` is used for batches of independent tool calls. The current planner supplies steps for display and routing; it does not construct a general dependency graph for complex plans. The `EventBus` publishes execution events and health diagnostics read its event history; there are no production event subscribers.
 
----
+## Providers and offline behavior
 
-## 3. Subsystem Breakdown
+The provider factory supports Gemini, Groq, OpenAI, Anthropic, and `LocalProvider`. `ModelRouter` selects providers based on the request, configured credentials, and required capabilities. Cloud failures may fall through to another eligible provider and ultimately to `LocalProvider`; authentication and quota failures are treated specially. `LocalProvider` is a deterministic rule-based fallback, not an offline general-purpose language model.
 
-### 3.1 AI Provider Abstraction (`app/services/ai/`)
-- Unified interface `AIProvider` with methods `chat()` and `is_available()`.
-- Implementations for **Google Gemini (`GeminiProvider`)**, **Groq (`GroqProvider`)**, **OpenAI (`OpenAIProvider`)**, and **Offline Local (`LocalProvider`)**.
-- Provider factory with automatic fallback resolution.
+## Files, memory, and research
 
-### 3.2 Document Generation Engine (`app/services/document_generation/`)
-- **PDF**: Built with `reportlab` featuring cover pages, headers, footers, code blocks, and tables.
-- **PowerPoint**: Built with `python-pptx` supporting 16:9 widescreen slides, custom color themes (`cyan`, `gold`, `emerald`, `crimson`, `purple`), bullet cards, and speaker notes.
-- **Word**: Built with `python-docx` supporting formatted headings, metadata headers, and XML code shading.
-- **Excel**: Built with `openpyxl` supporting styled fills, header grids, auto-column sizing, and dynamic `SUM` formulas.
+- Conversation/session records and user memories are stored in `jarvis_memory.db`.
+- Document text chunks and an SQLite FTS5 full-text index are stored in `jarvis_documents.db`. Retrieval is lexical; it is not vector-embedding search.
+- Projects and reminders are persisted as JSON files. See [DATABASE.md](DATABASE.md) for exact locations and limitations.
+- Text-capable document uploads are extracted and indexed. Image uploads are stored, but the upload route does not OCR or index image text.
+- The chat API accepts up to four uploaded image IDs for vision-capable providers. The current frontend upload flow does not pass those IDs into chat, so end-to-end image understanding is not available through that UI flow.
+- Research uses web search and safe page retrieval. Citations link to search results; the system does not independently verify the truth of cited claims.
 
-### 3.3 Study & Academic Engine (`app/services/study_mode/`)
-- In-depth structured notes generator with definitions, mathematical laws, formulas, and derivations.
-- Interactive MCQ exam generator with 4 difficulty tiers (`Easy`, `Medium`, `Hard`, `Exam Level`), hints, solutions, and step-by-step rationale.
-- Interactive flashcards.
+## Other implemented services and boundaries
 
-### 3.4 Deep Research Engine (`app/services/research/`)
-- Multi-query search via DuckDuckGo.
-- Top webpage extraction with `BeautifulSoup`.
-- Grounded intelligence synthesis with full domain citations.
+- Document generation includes PDF, PPTX, DOCX, and XLSX.
+- Study APIs provide notes and question generation; project and reminder APIs provide their own services.
+- Voice capture uses browser speech support and/or the audio transcription API; backend transcription uses Groq, while TTS uses Edge TTS. The HUD includes a Three.js globe and visual/audio controls.
+- Code execution uses an AST-restricted subprocess with a timeout, temporary working directory, output caps, and a scrubbed environment. It is not container or kernel isolation; configured memory/CPU values are diagnostic labels, not enforced resource limits.
+- `MultiDocumentReasoner`, `VisionAnalyzer`, `OCRService`, `MathEngine`, and the plugin registry exist, but are not wired into the main chat tool execution path. The calculator is the registered chat math tool. The plugin registry is exposed by diagnostics/health, not used to supply chat tools.
 
-### 3.5 Code Sandbox (`app/services/coding/`)
-- Isolated subprocess execution with strict timeouts (`JARVIS_SANDBOX_TIMEOUT`).
-- Output buffering and memory safety checks.
-- Code explanation, debugging, and automated unit test generation.
+## Deployment
 
-### 3.6 Memory & Semantic Search (`app/services/memory/`)
-- **Short-Term Memory**: Conversation session turns stored in SQLite `messages`.
-- **Long-Term Memory**: Categorized user preferences and facts stored in SQLite `memories`.
-- **Local RAG Vector Store**: Document chunking (sliding window with overlap) and BM25 term matching.
+The default Docker Compose service serves the built frontend and API on port `8765`. The optional `dev` profile runs Vite on port `1420`; a local Vite development server also proxies API requests to the backend. See [DEPLOYMENT.md](DEPLOYMENT.md).

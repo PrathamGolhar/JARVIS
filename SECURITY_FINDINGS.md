@@ -1,5 +1,7 @@
 # JARVIS — Security Findings
 
+> **Historical snapshot:** Findings below have not been revalidated against the current workspace. Consult [SECURITY.md](SECURITY.md) for source-checked current limitations.
+
 **Audit Date:** 2026-11-23  
 **Severity Scale:** Critical / High / Medium / Low  
 **Classification:** Confirmed Vulnerability | Potential Vulnerability | Architectural Risk

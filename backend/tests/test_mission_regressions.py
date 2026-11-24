@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 def test_regression_01_frontend_structure_and_config():
     """TEST 1: Frontend core entry points, configuration, and build scripts exist."""
-    front_dir = REPO_ROOT / "jarvis-frontend"
+    front_dir = REPO_ROOT / "frontend"
     assert (front_dir / "package.json").exists(), "Frontend package.json must exist"
     assert (front_dir / "package-lock.json").exists(), "Frontend package-lock.json must exist"
     assert (front_dir / "vite.config.ts").exists(), "Frontend vite.config.ts must exist"
@@ -43,9 +43,9 @@ def test_regression_01_frontend_structure_and_config():
 def test_regression_02_typescript_config_integrity():
     """TEST 2: TypeScript configs exist, parse as valid JSON, and have proper references."""
     root_ts = REPO_ROOT / "tsconfig.json"
-    front_ts = REPO_ROOT / "jarvis-frontend" / "tsconfig.json"
-    app_ts = REPO_ROOT / "jarvis-frontend" / "tsconfig.app.json"
-    node_ts = REPO_ROOT / "jarvis-frontend" / "tsconfig.node.json"
+    front_ts = REPO_ROOT / "frontend" / "tsconfig.json"
+    app_ts = REPO_ROOT / "frontend" / "tsconfig.app.json"
+    node_ts = REPO_ROOT / "frontend" / "tsconfig.node.json"
 
     assert root_ts.exists()
     assert front_ts.exists()
@@ -58,7 +58,7 @@ def test_regression_02_typescript_config_integrity():
     node_data = json.loads(node_ts.read_text(encoding="utf-8"))
 
     assert "references" in root_data
-    assert any("jarvis-frontend" in ref.get("path", "") for ref in root_data["references"])
+    assert any(ref.get("path", "").startswith("./frontend/") for ref in root_data["references"])
     assert "references" in front_data
     assert "compilerOptions" in app_data
     assert "compilerOptions" in node_data
@@ -69,10 +69,10 @@ def test_regression_03_no_absolute_developer_paths():
     forbidden = ["C:\\Users\\", "/Users/", "Desktop\\", "Desktop/", "Pratham Golhar", "Coding and stuff"]
     configs = [
         REPO_ROOT / "tsconfig.json",
-        REPO_ROOT / "jarvis-frontend" / "tsconfig.json",
-        REPO_ROOT / "jarvis-frontend" / "tsconfig.app.json",
-        REPO_ROOT / "jarvis-frontend" / "tsconfig.node.json",
-        REPO_ROOT / "jarvis-frontend" / "vite.config.ts",
+        REPO_ROOT / "frontend" / "tsconfig.json",
+        REPO_ROOT / "frontend" / "tsconfig.app.json",
+        REPO_ROOT / "frontend" / "tsconfig.node.json",
+        REPO_ROOT / "frontend" / "vite.config.ts",
     ]
     for cfg in configs:
         if cfg.exists():

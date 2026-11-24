@@ -1,86 +1,72 @@
-# JARVIS 2.0 Developer & Plugin SDK Guide
+# JARVIS Development
 
-This guide details local development workflows, adding custom agents and tools, and writing plugins using the JARVIS 2.0 Plugin SDK.
-
----
-
-## 1. Project Directory Layout
+## Repository layout
 
 ```text
-JARVIS/
-├── backend/   # FastAPI Backend Core
-│   ├── app/
-│   │   ├── api/                       # REST endpoint routers
-│   │   ├── services/
-│   │   │   ├── agents/                # Orchestrator, TaskGraph, Study, Doc agents
-│   │   │   ├── ai/                    # Multi-provider abstraction & ModelRouter
-│   │   │   ├── coding/                # Code sandbox & AST analyzers
-│   │   │   ├── document_generation/   # ReportLab, python-docx, python-pptx, openpyxl
-│   │   │   ├── events/                # Asynchronous EventBus
-│   │   │   ├── file_processing/       # PDF/Office parsers, OCR, MultiDoc reasoner
-│   │   │   ├── memory/                # SQLite persistent store & RAG
-│   │   │   ├── plugins/               # Plugin SDK & Registry
-│   │   │   ├── research/              # DuckDuckGo search & scraping
-│   │   │   ├── study_mode/            # Notes generator & MCQ exam prep
-│   │   │   └── tools/                 # Tool registry, MathEngine, Calculator
-│   │   └── settings.py                # Environment configuration
-│   └── tests/                         # Pytest test suites
-│
-├── jarvis-frontend/                   # React 19 + TypeScript + Vite HUD
-│   ├── src/
-│   │   ├── api/                       # Typed backend fetch clients
-│   │   ├── components/                # HUD panels, CommandPalette, Modals, 3D Globe
-│   │   ├── services/                  # SpeechManager, AIVisualController
-│   │   └── App.tsx                    # Main mission command interface
-│
-├── start-dev.ps1                      # Windows one-click startup launcher
-└── start-dev.sh                       # Linux / macOS startup launcher
+backend/
+  app/api/                 FastAPI routers
+  app/services/            Providers, orchestration, tools, memory, files, voice
+  tests/                   Pytest tests
+frontend/
+  src/api/                 Typed backend clients
+  src/components/          Chat, HUD, panels, and dialogs
+  src/services/             Speech, permissions, and visual controller
+  src/App.tsx               Frontend interaction and view state
 ```
 
----
+`backend/app/main.py` registers API routers. `frontend/src/main.tsx` mounts the React application. See [ARCHITECTURE.md](ARCHITECTURE.md) for verified runtime boundaries.
 
-## 2. Creating a Custom Plugin
+## Local development
 
-JARVIS 2.0 features an extensible plugin SDK (`app.services.plugins`).
+Install backend dependencies from the repository root:
 
-### Example: Writing a Custom Weather Plugin
-```python
-from app.services.plugins.base import JARVISPlugin, PluginToolDefinition, PermissionScope
-
-class MyCustomPlugin(JARVISPlugin):
-    name = "custom_weather_plugin"
-    version = "1.0.0"
-    description = "Provides real-time local weather forecasts."
-
-    def get_tools(self) -> list[PluginToolDefinition]:
-        return [
-            PluginToolDefinition(
-                name="get_weather_forecast",
-                description="Fetch 7-day weather forecast for a specified city.",
-                parameters_schema={
-                    "type": "object",
-                    "properties": {
-                        "city": {"type": "string", "description": "City name"}
-                    },
-                    "required": ["city"],
-                },
-                handler=self._fetch_weather,
-                required_permissions=[PermissionScope.EXTERNAL_NETWORK],
-                is_high_impact=False,
-            )
-        ]
-
-    def _fetch_weather(self, city: str) -> dict:
-        return {"city": city, "temperature": "22°C", "condition": "Sunny"}
-
-# Register plugin
-from app.services.plugins.base import plugin_registry
-plugin_registry.register_plugin(MyCustomPlugin())
+```powershell
+python -m pip install -r backend/requirements-dev.txt
+Copy-Item backend/.env.example backend/.env
 ```
 
----
+Set `JARVIS_API_KEY` and at least one cloud-provider key in `backend/.env` if you want authenticated cloud-backed operation. If no cloud provider is configured, chat may use the rule-based LocalProvider; it is not a general offline model.
 
-## 3. Keyboard Shortcuts in JARVIS HUD
-- `Ctrl + K` (or `Cmd + K` on macOS): Opens the **JARVIS Command Palette** for rapid search across all capabilities.
-- `Escape`: Closes open modals and drawers.
-- `Enter`: Sends chat command or selects active command palette item.
+Start the backend from `backend/`:
+
+```powershell
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --reload
+```
+
+In another terminal:
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+Open `http://localhost:1420`. The Vite proxy forwards `/api` to port `8765`.
+
+## Adding a chat tool
+
+1. Implement the handler and schema in `backend/app/services/tools/registry.py`.
+2. Add or update the capability policy in `backend/app/services/permissions.py`.
+3. Ensure permission checks and confirmation behavior are appropriate.
+4. Add focused tests under `backend/tests/` for success, failure, and denial behavior.
+5. Update [TOOLS.md](TOOLS.md) and [API.md](API.md) if the user-facing contract changes.
+
+The plugin registry exists, but plugin tools are not currently integrated into chat execution. Do not treat registering a plugin as adding a callable chat tool.
+
+## Validation commands
+
+```powershell
+python -m pytest backend/tests -v
+cd frontend
+npm test
+npm run lint
+npm run build
+```
+
+`npm run lint` is currently the TypeScript compiler check. See [TESTING.md](TESTING.md) for the automated validation scope.
+
+## Interface
+
+- `Ctrl+K` / `Cmd+K` opens the command palette.
+- `Escape` closes the active dialog or drawer.
+- The HUD globe and voice controls are UI features; they do not imply background listening or a general frontend-managed task DAG.

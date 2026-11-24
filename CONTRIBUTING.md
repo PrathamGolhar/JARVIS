@@ -16,11 +16,11 @@ cd backend
 python -m venv .venv
 # Activate virtual environment
 source .venv/bin/activate  # Or on Windows: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 # 2. Frontend Setup
-cd ../../../jarvis-frontend
-npm install
+cd ../frontend
+npm ci
 ```
 
 ---
@@ -28,9 +28,8 @@ npm install
 ## 2. Coding Standards
 
 - **Python (Backend)**:
-  - Format with `black` and `isort`.
-  - Enforce type hints on all public functions and service methods.
-  - Write test cases in `tests/` for any new tool, agent, or document generator.
+  - Follow existing formatting and typing patterns.
+  - Add focused tests in `backend/tests/` for new or changed behavior.
 - **TypeScript & React (Frontend)**:
   - Clean functional components with React Hooks.
   - Strict type definitions (`interface` / `type`).
@@ -43,9 +42,9 @@ npm install
 
 To register a new capability:
 1. Create a module in `app/services/tools/` (e.g., `app/services/tools/my_tool.py`).
-2. Register the tool function in `app/services/tools/registry.py` with its JSON schema and execution handler.
-3. Categorize its safety risk (`is_high_impact_tool`).
-4. Add a unit test in `tests/test_tools.py`.
+2. Register the function and JSON schema in `app/services/tools/registry.py`.
+3. Add or update its capability policy in `app/services/permissions.py`; there is no separate risk-level map.
+4. Add focused success, error, and permission tests under `backend/tests/`.
 
 ---
 
@@ -54,14 +53,19 @@ To register a new capability:
 ### Backend Tests (pytest)
 ```bash
 cd backend
+python -m pip install -r requirements-dev.txt
 python -m pytest -v
 ```
 
 ### Frontend Type-Check & Build
 ```bash
-cd jarvis-frontend
+cd frontend
+npm test
+npm run lint
 npm run build
 ```
+
+`npm run lint` is a TypeScript check, not an ESLint invocation. See [TESTING.md](TESTING.md) for the current commands.
 
 ---
 

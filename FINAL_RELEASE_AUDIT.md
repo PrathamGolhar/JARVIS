@@ -1,5 +1,7 @@
 # JARVIS 2.0 — FINAL RELEASE AUDIT & PRODUCTION READINESS REPORT
 
+> **Historical snapshot:** The readiness conclusions and findings below are not current deployment approval. Verify against the current source, configuration, and [DEPLOYMENT.md](DEPLOYMENT.md).
+
 **Audit Date:** November 24, 2026  
 **Auditor:** Independent Principal QA & Systems Security Engineer  
 **Status:** **APPROVED FOR CONTROLLED LOCAL & ENTERPRISE DEPLOYMENT**  

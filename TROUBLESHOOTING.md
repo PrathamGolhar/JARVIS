@@ -1,5 +1,7 @@
 # JARVIS 2.0 Troubleshooting & Diagnostic Guide
 
+Commands and paths below use the current `backend/` and `frontend/` layout. For deployment limits, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
 This guide provides step-by-step diagnostic procedures and solutions for common operational issues across the JARVIS system.
 
 ---
@@ -40,7 +42,8 @@ Run the built-in system diagnostics probe from terminal or browser:
 **Solution**:
 1. Verify that your `.env` file exists at `backend/.env` (or root `.env`).
 2. Ensure `GOOGLE_API_KEY`, `GROQ_API_KEY`, or `OPENAI_API_KEY` contains a valid key without trailing quotes.
-3. Restart the backend process.
+3. Configure `JARVIS_API_KEY` for authentication. If it is unset, the backend generates an ephemeral key and logs it.
+4. Restart the backend process.
 
 ---
 
@@ -48,7 +51,7 @@ Run the built-in system diagnostics probe from terminal or browser:
 **Symptom**: Frontend shows "Edge voice synthesis unavailable".
 **Solution**:
 - Ensure the backend has an active internet connection to stream neural voices from Edge-TTS.
-- If offline, text chat and all document/agent generation remain 100% operational.
+- If offline, provider-dependent transcription and speech synthesis may fail. `LocalProvider` is a limited rule-based fallback, not an offline general-purpose model.
 
 ---
 
@@ -57,15 +60,10 @@ Run the built-in system diagnostics probe from terminal or browser:
 **Solution**:
 - Ensure all Python dependencies are installed in your active virtual environment:
   ```bash
-  pip install -r requirements.txt
+  python -m pip install -r backend/requirements.txt
   ```
 
 ---
 
 ## 3. Structured Logging
-Backend logs are output with timestamps and subsystem tags:
-```text
-2026-09-24 04:00:15 [INFO] jarvis.main: JARVIS PRODUCTION AI ASSISTANT CORE ONLINE
-2026-09-24 04:00:16 [INFO] jarvis.model_router: JARVIS Model Router: category=deep_reasoning -> provider=gemini
-2026-09-24 04:00:17 [INFO] jarvis.task_graph: TaskGraph: Starting task 'Generate Presentation' (step_2)
-```
+The backend uses Python logging with subsystem-specific logger names. Consult the current traceback and component logs rather than relying on example log lines, which can become stale. Avoid sharing logs that contain secrets; the current ephemeral API-key fallback logs its generated key.

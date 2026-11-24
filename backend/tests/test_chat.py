@@ -191,7 +191,7 @@ def test_offline_provider_uses_neutral_greeting_and_configured_detail() -> None:
                 "role": "system",
                 "content": "Response style: Explain the reasoning and relevant details clearly, while staying focused.",
             },
-            {"role": "tool", "name": "calculator", "content": '{"expression":"2 + 2","result":4}'},
+            {"role": "tool", "name": "calculator", "content": '{"ok":true,"expression":"2 + 2","result":4}'},
         ]
     )
 

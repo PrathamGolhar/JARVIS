@@ -68,96 +68,114 @@ def generate_structured_study_notes(
             content = content[:-3]
 
         data = json.loads(content.strip())
+        if not isinstance(data, dict):
+            raise ValueError("The provider response was not a JSON object.")
+        required_fields = {
+            "title",
+            "subject",
+            "summary",
+            "keyConcepts",
+            "definitions",
+            "detailedNotesMarkdown",
+            "flashcards",
+        }
+        if include_formulas:
+            required_fields.add("formulas")
+        if include_practice_questions:
+            required_fields.add("practiceQuestions")
+        missing_fields = required_fields - data.keys()
+        if missing_fields:
+            raise ValueError(f"The provider response is missing fields: {', '.join(sorted(missing_fields))}.")
+        for field_name in ("title", "subject", "summary", "detailedNotesMarkdown"):
+            if not isinstance(data[field_name], str) or not data[field_name].strip():
+                raise ValueError(f"The provider response has no usable {field_name}.")
+        if not isinstance(data["keyConcepts"], list) or not data["keyConcepts"]:
+            raise ValueError("The provider response did not include key concepts.")
+        for field_name in ("definitions", "flashcards"):
+            if not isinstance(data[field_name], list):
+                raise ValueError(f"The provider response has an invalid {field_name} list.")
+        if include_formulas and not isinstance(data["formulas"], list):
+            raise ValueError("The provider response has an invalid formulas list.")
+        if include_practice_questions and (
+            not isinstance(data["practiceQuestions"], list) or not data["practiceQuestions"]
+        ):
+            raise ValueError("The provider response did not include practice questions.")
 
         definitions = [
             DefinitionItem(
-                term=d.get("term", ""),
-                definition=d.get("definition", ""),
+                term=d["term"],
+                definition=d["definition"],
                 example=d.get("example", ""),
             )
             for d in data.get("definitions", [])
+            if isinstance(d, dict) and isinstance(d.get("term"), str) and d["term"].strip()
+            and isinstance(d.get("definition"), str) and d["definition"].strip()
         ]
 
         formulas = [
             FormulaItem(
-                name=f.get("name", ""),
-                formula=f.get("formula", ""),
+                name=f["name"],
+                formula=f["formula"],
                 explanation=f.get("explanation", ""),
                 variables=f.get("variables", {}),
             )
             for f in data.get("formulas", [])
+            if isinstance(f, dict) and isinstance(f.get("name"), str) and f["name"].strip()
+            and isinstance(f.get("formula"), str) and f["formula"].strip()
         ]
 
         practice_questions = [
             MCQItem(
                 id=q.get("id", i + 1),
-                question=q.get("question", ""),
-                options=q.get("options", ["A", "B", "C", "D"]),
-                correctOptionIndex=q.get("correctOptionIndex", 0),
+                question=q["question"],
+                options=q["options"],
+                correctOptionIndex=q["correctOptionIndex"],
                 difficulty=q.get("difficulty", "Medium"),
                 hint=q.get("hint", ""),
                 solution=q.get("solution", ""),
                 explanation=q.get("explanation", ""),
             )
             for i, q in enumerate(data.get("practiceQuestions", []))
+            if isinstance(q, dict)
+            and isinstance(q.get("question"), str)
+            and q["question"].strip()
+            and isinstance(q.get("options"), list)
+            and len(q["options"]) >= 2
+            and isinstance(q.get("correctOptionIndex"), int)
+            and 0 <= q["correctOptionIndex"] < len(q["options"])
         ]
 
         flashcards = [
             FlashcardItem(
-                front=fc.get("front", ""),
-                back=fc.get("back", ""),
+                front=fc["front"],
+                back=fc["back"],
                 topic=fc.get("topic", ""),
             )
             for fc in data.get("flashcards", [])
+            if isinstance(fc, dict)
+            and isinstance(fc.get("front"), str)
+            and fc["front"].strip()
+            and isinstance(fc.get("back"), str)
+            and fc["back"].strip()
         ]
+        if len(definitions) != len(data["definitions"]) or len(flashcards) != len(data["flashcards"]):
+            raise ValueError("The provider response contains invalid definition or flashcard entries.")
+        if include_practice_questions and len(practice_questions) != len(data["practiceQuestions"]):
+            raise ValueError("The provider response contains invalid practice-question entries.")
+        if include_formulas and len(formulas) != len(data["formulas"]):
+            raise ValueError("The provider response contains invalid formula entries.")
 
         return StudyNotesResponse(
-            title=data.get("title", subject or "Study Notes"),
-            subject=data.get("subject", subject),
-            summary=data.get("summary", ""),
+            title=data["title"],
+            subject=data["subject"],
+            summary=data["summary"],
             keyConcepts=data.get("keyConcepts", []),
             definitions=definitions,
             formulas=formulas,
-            detailedNotesMarkdown=data.get("detailedNotesMarkdown", content),
+            detailedNotesMarkdown=data["detailedNotesMarkdown"],
             practiceQuestions=practice_questions,
             flashcards=flashcards,
         )
     except Exception as exc:
-        logger.warning("AI structured study generator fallback: %s", exc)
-        # Robust fallback structured notes
-        return StudyNotesResponse(
-            title=f"Study Notes on {subject}",
-            subject=subject,
-            summary=f"Comprehensive study breakdown for '{topic_or_text[:100]}...'.",
-            keyConcepts=["Core Principles", "Analytical Framework", "Practical Applications"],
-            definitions=[
-                DefinitionItem(term="Fundamental Concept", definition="Core theory and foundational laws governing the topic.", example="Practical domain implementation.")
-            ],
-            formulas=[
-                FormulaItem(name="Standard Governing Relation", formula="E = mc^2", explanation="Mass-energy equivalence principle.", variables={"E": "Energy", "m": "Mass", "c": "Speed of light"})
-            ] if include_formulas else [],
-            detailedNotesMarkdown=(
-                f"# Study Notes: {subject}\n\n"
-                f"## 1. Overview\n{topic_or_text[:500]}\n\n"
-                f"## 2. Key Observations & In-Depth Concepts\n"
-                f"- Primary mechanism and logical formulation\n"
-                f"- Critical definitions and theoretical boundary conditions\n"
-                f"- Step-by-step methodologies and analysis\n\n"
-                f"## 3. Review Summary\nThe core academic points are organized for review."
-            ),
-            practiceQuestions=[
-                MCQItem(
-                    id=1,
-                    question=f"What is the primary objective of studying {subject}?",
-                    options=["To master foundational principles and applications", "To memorize facts without understanding", "To skip practical experiments", "None of the above"],
-                    correctOptionIndex=0,
-                    difficulty="Medium",
-                    hint="Consider the broad engineering/academic goal.",
-                    solution="Option A",
-                    explanation="Comprehensive mastery entails theoretical rigor combined with practical application.",
-                )
-            ] if include_practice_questions else [],
-            flashcards=[
-                FlashcardItem(front=f"What defines {subject}?", back="The systematic exploration of principles and applications.", topic=subject)
-            ],
-        )
+        logger.warning("AI structured study generation failed: %s", exc)
+        raise RuntimeError("Study notes generation failed; no fallback notes were generated.") from exc

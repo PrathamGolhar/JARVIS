@@ -7,7 +7,7 @@ echo "========================================="
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 BACKEND_DIR="$DIR/backend"
-FRONTEND_DIR="$DIR/jarvis-frontend"
+FRONTEND_DIR="$DIR/frontend"
 
 # Check Python environment
 if ! command -v python3 &> /dev/null; then

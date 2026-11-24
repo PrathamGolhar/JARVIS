@@ -37,7 +37,8 @@ def extract_file_text_and_meta(file_path: Path | str) -> dict[str, Any]:
             extracted_pages = []
             for idx, page in enumerate(reader.pages):
                 page_text = page.extract_text() or ""
-                extracted_pages.append(f"--- Page {idx + 1} ---\n{page_text}")
+                if page_text.strip():
+                    extracted_pages.append(f"--- Page {idx + 1} ---\n{page_text}")
             text = "\n\n".join(extracted_pages)
             topics = [f"PDF Document with {pages_or_units} pages"]
 
@@ -57,7 +58,8 @@ def extract_file_text_and_meta(file_path: Path | str) -> dict[str, Any]:
                 for shape in slide.shapes:
                     if shape.has_text_frame:
                         stext.append(shape.text_frame.text)
-                slide_texts.append(f"--- Slide {idx + 1} ---\n" + "\n".join(stext))
+                if stext:
+                    slide_texts.append(f"--- Slide {idx + 1} ---\n" + "\n".join(stext))
             text = "\n\n".join(slide_texts)
             topics = [f"Presentation with {pages_or_units} slides"]
 

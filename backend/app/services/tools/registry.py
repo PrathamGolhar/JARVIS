@@ -1,5 +1,4 @@
 import concurrent.futures
-from enum import Enum
 import json
 import logging
 import secrets
@@ -7,6 +6,7 @@ import threading
 import time
 from typing import Any
 
+from app.services.permissions import get_capability_for_tool
 from app.services.coding.sandbox import execute_sandboxed_code
 from app.services.document_generation.docx_generator import generate_docx_document
 from app.services.document_generation.excel_generator import generate_excel_spreadsheet
@@ -29,11 +29,6 @@ _idempotency_lock = threading.Lock()
 _idempotency_results: dict[str, tuple[float, dict[str, Any]]] = {}
 _IDEMPOTENCY_TTL_SECONDS = 600
 _IDEMPOTENCY_CACHE_MAX_SIZE = 2048
-
-
-class RiskLevel(str, Enum):
-    LOW = "low"  # Auto-executable
-    HIGH = "high"  # Requires explicit confirmation
 
 
 TOOLS_SCHEMA = [
@@ -271,25 +266,6 @@ TOOLS_SCHEMA = [
     },
 ]
 
-TOOL_RISK_MAP = {
-    "web_search": RiskLevel.LOW,
-    "read_webpage": RiskLevel.LOW,
-    "calculator": RiskLevel.LOW,
-    "get_weather": RiskLevel.LOW,
-    "system_diagnostics": RiskLevel.LOW,
-    "search_files": RiskLevel.LOW,
-    "read_file": RiskLevel.LOW,
-    "generate_presentation": RiskLevel.LOW,
-    "generate_pdf_report": RiskLevel.LOW,
-    "generate_word_doc": RiskLevel.LOW,
-    "deep_web_research": RiskLevel.LOW,
-    "set_user_preference": RiskLevel.LOW,
-    "create_reminder": RiskLevel.LOW,
-    "execute_python_code": RiskLevel.HIGH,
-    "write_file": RiskLevel.HIGH,
-    "open_application": RiskLevel.HIGH,
-}
-
 for _tool_schema in TOOLS_SCHEMA:
     _tool_schema["function"]["parameters"]["additionalProperties"] = False
 
@@ -300,8 +276,13 @@ TOOL_SCHEMA_BY_NAME = {
 
 
 def is_high_impact_tool(tool_name: str) -> bool:
-    """Check if tool is high impact. Unknown tools FAIL-CLOSED to high impact."""
-    return TOOL_RISK_MAP.get(tool_name, RiskLevel.HIGH) == RiskLevel.HIGH
+    """Derive impact from the authoritative capability policy; unknown tools fail closed."""
+    capability = get_capability_for_tool(tool_name)
+    return (
+        capability is None
+        or capability.requires_confirmation
+        or capability.is_destructive_or_sensitive
+    )
 
 
 def validate_tool_arguments(tool_name: str, args: dict[str, Any]) -> tuple[bool, str]:
@@ -534,14 +515,23 @@ def _dispatch_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         )
         findings_text = getattr(research, "findings_markdown", getattr(research, "findingsMarkdown", ""))
         takeaways = getattr(research, "key_takeaways", getattr(research, "keyTakeaways", []))
+        research_succeeded = research.status == "success"
         return {
-            "ok": True,
+            "ok": research_succeeded,
+            "status": research.status,
+            "synthesisStatus": research.synthesis_status,
+            "sourceStatus": research.source_status,
             "topic": research.topic,
             "summary": research.summary,
             "findings": findings_text[:3000],
             "keyTakeaways": takeaways,
             "citations": [c.model_dump() for c in research.citations[:8]],
-            "message": f"Deep research on '{research.topic}' completed with {len(research.citations)} verified sources.",
+            "error": None if research_succeeded else research.diagnostic or "Research was incomplete.",
+            "message": (
+                f"Deep research on '{research.topic}' completed with {len(research.citations)} search result citations."
+                if research_succeeded
+                else research.diagnostic or "Deep research did not complete successfully."
+            ),
         }
 
     return {"ok": False, "error": f"Tool '{tool_name}' is not recognized."}
@@ -668,7 +658,27 @@ def execute_tool_call(
             raw_result.setdefault("tool", tool_name)
             raw_result.setdefault("traceId", trace_id)
             raw_result.setdefault("executionTimeMs", duration_ms)
+            if raw_result.get("ok") is not True:
+                has_explicit_status = "ok" in raw_result
+                raw_result["ok"] = False
+                if not raw_result.get("error"):
+                    detail = raw_result.get("stderr") or raw_result.get("message")
+                    raw_result["error"] = (
+                        str(detail)
+                        if detail
+                        else "Tool reported failure."
+                        if has_explicit_status
+                        else "Tool returned no explicit success status."
+                    )
             result = raw_result
+        elif raw_result is None:
+            result = {
+                "ok": False,
+                "tool": tool_name,
+                "error": "Tool returned no result.",
+                "traceId": trace_id,
+                "executionTimeMs": duration_ms,
+            }
         else:
             result = {
                 "ok": True,

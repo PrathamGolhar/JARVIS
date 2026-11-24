@@ -83,6 +83,13 @@ interface IWindowSpeechRecognition extends EventTarget {
   onend: (() => void) | null;
 }
 
+declare global {
+  interface Window {
+    SpeechRecognition?: new () => IWindowSpeechRecognition;
+    webkitSpeechRecognition?: new () => IWindowSpeechRecognition;
+  }
+}
+
 export class SpeechManager {
   // Configurable Pause & VAD Thresholds (ms)
   public static readonly SHORT_PAUSE_MS = 1200;

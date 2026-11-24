@@ -285,6 +285,20 @@ class ResearchResponse(BaseModel):
     citations: list[Citation]
     key_takeaways: list[str] = Field(default_factory=list, alias="keyTakeaways")
     generated_file_url: str | None = Field(default=None, alias="generatedFileUrl")
+    status: Literal["success", "partial_success", "failure", "unverified"] = "unverified"
+    synthesis_status: Literal["success", "failure", "not_attempted"] = Field(
+        default="not_attempted",
+        alias="synthesisStatus",
+    )
+    source_status: Literal["none", "search_results", "page_content_retrieved"] = Field(
+        default="none",
+        alias="sourceStatus",
+    )
+    document_status: Literal["not_requested", "generated", "not_generated", "unsupported"] = Field(
+        default="not_requested",
+        alias="documentStatus",
+    )
+    diagnostic: str | None = None
 
     @property
     def findingsMarkdown(self) -> str:

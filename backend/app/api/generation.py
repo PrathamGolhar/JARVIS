@@ -11,9 +11,16 @@ from app.services.document_generation.docx_generator import generate_docx_docume
 from app.services.document_generation.excel_generator import generate_excel_spreadsheet
 from app.services.document_generation.pdf_generator import generate_pdf_document
 from app.services.document_generation.pptx_generator import generate_pptx_presentation
+from app.services.agents.verifier import output_verifier
 from app.services.memory import memory_store
 
 router = APIRouter(prefix="/api/generate", tags=["generation"], dependencies=[Depends(require_principal)])
+
+
+def _verify_generated_artifact(path, expected_extension: str) -> None:
+    verification = output_verifier.verify_generated_file(path, expected_extension=expected_extension)
+    if not verification.get("verified"):
+        raise RuntimeError(f"Generated file verification failed: {verification.get('reason')}")
 
 
 @router.post("/pdf")
@@ -28,6 +35,7 @@ async def generate_pdf(
             subtitle=request.subtitle,
             subject=request.subject,
         )
+        _verify_generated_artifact(pdf_path, ".pdf")
         memory_store.register_artifact(pdf_path.name, owner_id)
         return {
             "ok": True,
@@ -61,6 +69,7 @@ async def generate_pptx(
             slides=request.slides,
             theme_color=request.theme_color,
         )
+        _verify_generated_artifact(pptx_path, ".pptx")
         memory_store.register_artifact(pptx_path.name, owner_id)
         return {
             "ok": True,
@@ -84,6 +93,7 @@ async def generate_docx(
             subtitle=request.subtitle,
             author=request.author,
         )
+        _verify_generated_artifact(docx_path, ".docx")
         memory_store.register_artifact(docx_path.name, owner_id)
         return {
             "ok": True,
@@ -108,6 +118,7 @@ async def generate_xlsx(
             sheet_name=request.sheet_name,
             include_summary_row=request.include_summary_row,
         )
+        _verify_generated_artifact(xlsx_path, ".xlsx")
         memory_store.register_artifact(xlsx_path.name, owner_id)
         return {
             "ok": True,

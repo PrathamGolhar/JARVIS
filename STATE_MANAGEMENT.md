@@ -1,5 +1,7 @@
 # JARVIS 2.0 Frontend State Management
 
+> **Historical design snapshot:** State-flow and endpoint claims below may no longer match the source. The canonical current description is [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md).
+
 ## 1. Overview
 
 JARVIS 2.0 uses a high-performance, modular state management architecture designed to handle concurrent background telemetry, real-time voice streaming, and responsive multi-workspace navigation without unnecessary re-renders.

@@ -31,12 +31,14 @@ def test_system_diagnostics_metrics() -> None:
     assert "os" in diagnostics
 
 
-def test_tool_registry_risk_mapping() -> None:
+def test_tool_impact_uses_authoritative_capability_policy() -> None:
     assert is_high_impact_tool("open_application") is True
     assert is_high_impact_tool("write_file") is True
+    assert is_high_impact_tool("execute_python_code") is True
     assert is_high_impact_tool("calculator") is False
     assert is_high_impact_tool("web_search") is False
     assert is_high_impact_tool("get_weather") is False
+    assert is_high_impact_tool("unknown_tool") is True
 
 
 def test_tool_schema_rejects_missing_and_unknown_arguments() -> None:

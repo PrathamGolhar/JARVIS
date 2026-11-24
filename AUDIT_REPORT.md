@@ -1,5 +1,7 @@
 # JARVIS — Complete Engineering Audit Report
 
+> **Historical snapshot:** This report records findings from its stated audit date and commit. The canonical frontend path is now `frontend/`; references to `jarvis-frontend/` and other findings are preserved as historical and have not been revalidated.
+
 **Audit Date:** 2026-11-23  
 **Auditor:** Principal Software Architect / AI Systems Engineer  
 **Repository:** https://github.com/PrathamGolhar/JARVIS  

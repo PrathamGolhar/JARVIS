@@ -11,6 +11,8 @@ services:
       - JARVIS_ENV=production
       - JARVIS_HOST=0.0.0.0
       - JARVIS_PORT=8765
+      - JARVIS_API_KEY=${JARVIS_API_KEY:-}
+      - JARVIS_AUTH_ENABLED=${JARVIS_AUTH_ENABLED:-true}
       - JARVIS_AI_PROVIDER=${JARVIS_AI_PROVIDER:-auto}
       - JARVIS_GEMINI_API_KEY=${JARVIS_GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}
       - JARVIS_GEMINI_MODEL=${JARVIS_GEMINI_MODEL:-gemini-2.5-flash}
@@ -21,11 +23,7 @@ services:
       - JARVIS_OPENAI_MODEL=${JARVIS_OPENAI_MODEL:-gpt-4o}
       - JARVIS_ANTHROPIC_API_KEY=${JARVIS_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}
       - JARVIS_ANTHROPIC_MODEL=${JARVIS_ANTHROPIC_MODEL:-claude-3-5-sonnet-20241022}
-      - JARVIS_ELEVENLABS_API_KEY=${JARVIS_ELEVENLABS_API_KEY:-${ELEVENLABS_API_KEY:-}}
-      - JARVIS_STT_PROVIDER=${JARVIS_STT_PROVIDER:-groq-whisper}
-      - JARVIS_TTS_PROVIDER=${JARVIS_TTS_PROVIDER:-edge-tts}
       - EDGE_TTS_VOICE=${EDGE_TTS_VOICE:-en-US-GuyNeural}
-      - JARVIS_DATABASE_URL=sqlite:////app/data/jarvis_memory.db
       - JARVIS_PERMISSION_MODE=${JARVIS_PERMISSION_MODE:-assisted}
       - JARVIS_SANDBOX_TIMEOUT=${JARVIS_SANDBOX_TIMEOUT:-15}
       - JARVIS_LOCAL_ACTIONS_ENABLED=false
@@ -47,7 +45,7 @@ services:
     ports:
       - "1420:1420"
     volumes:
-      - ./jarvis-frontend:/app
+      - ./frontend:/app
       - /app/node_modules
     environment:
       - JARVIS_API_PROXY_TARGET=http://jarvis-backend:8765

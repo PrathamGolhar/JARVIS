@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { performDeepResearch, ResearchResult } from '../api/research';
+import { getResearchOutcome, performDeepResearch, ResearchResult } from '../api/research';
 import { CitationsList } from './CitationsList';
 import { showToast } from './ToastNotificationSystem';
 
 export const ResearchWorkspace: React.FC = () => {
   const [query, setQuery] = useState('');
   const [depth, setDepth] = useState<'fast' | 'deep' | 'academic'>('deep');
-  const [docFormat, setDocFormat] = useState<'none' | 'pdf' | 'docx' | 'pptx' | 'markdown'>('none');
+  const [docFormat, setDocFormat] = useState<'none' | 'pdf'>('none');
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,15 +20,16 @@ export const ResearchWorkspace: React.FC = () => {
     try {
       showToast({
         title: 'Research Dispatched',
-        message: `Investigating "${query}" across verified web sources...`,
+        message: `Searching for source material about "${query}"...`,
         type: 'cyber',
       });
       const data = await performDeepResearch(query, depth, docFormat);
       setResult(data);
+      const outcome = getResearchOutcome(data);
       showToast({
-        title: 'Research Complete',
-        message: `Synthesized findings with ${data.citations?.length ?? 0} citations.`,
-        type: 'success',
+        title: outcome.title,
+        message: outcome.message,
+        type: outcome.toastType,
       });
     } catch (err: any) {
       const msg = err?.message || 'Failed to complete research query';
@@ -66,7 +67,7 @@ export const ResearchWorkspace: React.FC = () => {
               DEEP RESEARCH & SYNTHESIS CENTER
             </h1>
             <p className="text-xs text-slate-400">
-              Live DuckDuckGo scraping, multi-source verification, citation grounding, and automated document compilation.
+              Live search, safe webpage retrieval, source-linked synthesis, and PDF export.
             </p>
           </div>
         </div>
@@ -129,7 +130,7 @@ export const ResearchWorkspace: React.FC = () => {
 
             <div className="flex items-center space-x-2">
               <span className="text-cyan-400 font-bold">EXPORT DOCUMENT:</span>
-              {(['none', 'pdf', 'docx', 'pptx', 'markdown'] as const).map((f) => (
+              {(['none', 'pdf'] as const).map((f) => (
                 <button
                   key={f}
                   type="button"
@@ -173,12 +174,24 @@ export const ResearchWorkspace: React.FC = () => {
       {/* Research Output View */}
       {result && (
         <div className="space-y-6">
+          <div
+            role="status"
+            className={`p-4 rounded-xl border text-xs font-mono ${
+              result.status === 'success' && result.synthesisStatus === 'success'
+                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
+                : result.status === 'failure'
+                  ? 'bg-rose-500/10 border-rose-500/40 text-rose-300'
+                  : 'bg-amber-500/10 border-amber-500/40 text-amber-200'
+            }`}
+          >
+            <strong>{getResearchOutcome(result).title}:</strong> {getResearchOutcome(result).message}
+          </div>
           {/* Executive Summary Card */}
           <div className="glass-panel p-6 rounded-2xl border border-cyan-500/30 space-y-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-cyan-500/20 pb-4">
               <div>
                 <span className="text-[10px] font-mono font-bold text-cyan-400 uppercase tracking-wider">
-                  EXECUTIVE RESEARCH DOSSIER
+                  {result.synthesisStatus === 'success' ? 'RESEARCH REPORT' : 'RESEARCH ATTEMPT'}
                 </span>
                 <h2 className="text-xl font-bold text-white mt-1">{result.topic || query}</h2>
               </div>
@@ -200,7 +213,7 @@ export const ResearchWorkspace: React.FC = () => {
 
             <div>
               <h3 className="text-xs font-bold font-mono text-cyan-300 uppercase tracking-wider mb-2">
-                Executive Synthesis
+                {result.synthesisStatus === 'success' ? 'Executive Synthesis' : 'Research status'}
               </h3>
               <p className="text-sm text-slate-200 leading-relaxed bg-slate-950/50 p-4 rounded-xl border border-cyan-500/10">
                 {result.summary}
@@ -232,7 +245,7 @@ export const ResearchWorkspace: React.FC = () => {
           {result.findingsMarkdown && (
             <div className="glass-panel p-6 rounded-2xl border border-cyan-500/20 space-y-3">
               <h3 className="text-xs font-bold font-mono text-cyan-300 uppercase tracking-wider">
-                Full Investigated Findings
+                {result.synthesisStatus === 'success' ? 'Research Findings' : 'Collected Search Results (Not Synthesized)'}
               </h3>
               <div className="prose prose-invert prose-cyan max-w-none text-xs text-slate-300 leading-relaxed font-sans whitespace-pre-wrap bg-slate-950/60 p-5 rounded-xl border border-slate-800">
                 {result.findingsMarkdown}
@@ -240,14 +253,18 @@ export const ResearchWorkspace: React.FC = () => {
             </div>
           )}
 
-          {/* Grounded Citations List */}
+          {/* Search-result citations */}
           {result.citations && result.citations.length > 0 && (
             <div className="glass-panel p-6 rounded-2xl border border-cyan-500/20 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold font-mono text-cyan-300 uppercase tracking-wider">
-                  Verified Citations ({result.citations.length})
+                  Search-result citations ({result.citations.length})
                 </h3>
-                <span className="text-[10px] text-slate-400 font-mono">100% Grounded Sources</span>
+                <span className="text-[10px] text-slate-400 font-mono">
+                  {result.sourceStatus === 'page_content_retrieved'
+                    ? 'At least one page retrieved; sources not fact-checked'
+                    : 'Search results; not independently verified'}
+                </span>
               </div>
               <CitationsList citations={result.citations} />
             </div>

@@ -1,5 +1,7 @@
 # JARVIS 2.0 — FINAL SECURITY REPORT
 
+> **Historical snapshot:** This report is not a current security certification or authoritative architecture description. Verify all claims against source and [SECURITY.md](SECURITY.md).
+
 **Date:** November 24, 2026  
 **Security Classification:** Authoritative Hardened AI Assistant Architecture
 **Test Suite Verification:** 185 Passing Backend Tests (100%), 0 TypeScript Compilation Errors

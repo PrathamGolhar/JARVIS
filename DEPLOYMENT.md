@@ -1,119 +1,34 @@
-# JARVIS Production Deployment & Operations Guide
+# JARVIS Deployment
 
-This guide details deployment options for running JARVIS in production, ranging from bare-metal local environments to containerized Docker deployments and cloud Kubernetes setups.
+The repository currently documents local development and Docker Compose. It does not include Kubernetes manifests, a Gunicorn dependency, or a supported cloud deployment recipe. Review [SECURITY.md](SECURITY.md) before exposing the service beyond a trusted local network.
 
----
+## Local development
 
-## 1. System Requirements
+Follow [SETUP.md](SETUP.md). The FastAPI backend listens on port `8765`; Vite serves the frontend on port `1420` and proxies `/api` to the backend.
 
-### Hardware Requirements
-- **Minimum**: 2 vCPU, 4GB RAM, 10GB free disk space.
-- **Recommended**: 4+ vCPU, 8GB+ RAM, SSD storage.
+## Docker Compose
 
-### Software Prerequisites
-- **Python**: 3.11 or higher
-- **Node.js**: 18.x or 20.x LTS
-- **Docker & Docker Compose**: (Optional, for containerized deployment)
+The default Compose service builds the frontend into the backend image and serves both UI and API on port `8765`. Before starting, copy `.env.example` to `.env` at the repository root and set `JARVIS_API_KEY` plus any provider keys you intend to use.
 
----
-
-## 2. Bare-Metal / Local Server Deployment
-
-### 2.1 Backend Deployment with Systemd / Supervisord
-1. Prepare python virtual environment:
-   ```bash
-    cd backend
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\Activate.ps1
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-2. Configure `.env` with production keys:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your Google Gemini / Groq API keys and environment=production
-   ```
-3. Run with Gunicorn + Uvicorn workers:
-   ```bash
-   pip install gunicorn
-   gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8765
-   ```
-
-### 2.2 Frontend Static Build & Hosting
-1. Build optimized production bundle:
-   ```bash
-   cd jarvis-frontend
-   npm ci
-   npm run build
-   ```
-2. Serve static `dist/` bundle using Nginx, Caddy, or Cloudflare Pages.
-
----
-
-## 3. Containerized Deployment (Docker Compose)
-
-The repository provides a production multi-stage `Dockerfile` and `docker-compose.yml`.
-
-### Launching with Docker Compose:
-```bash
-# 1. Provide your API keys
-export GOOGLE_API_KEY="your-gemini-key"
-export GROQ_API_KEY="your-groq-key"
-
-# 2. Build and run
-docker compose up -d --build
+```powershell
+docker compose up --build
 ```
 
-### Checking Container Health:
-```bash
-docker compose ps
-docker compose logs -f jarvis-backend
+Open `http://localhost:8765`. To run a separate Vite development server in a container, use the optional profile:
+
+```powershell
+docker compose --profile dev up --build
 ```
 
----
+The development frontend is at `http://localhost:1420`; the API remains on `http://localhost:8765`. The Compose backend disables local application launching.
 
-## 4. Reverse Proxy Setup (Nginx Example)
+## Persistence
 
-```nginx
-server {
-    listen 80;
-    server_name jarvis.yourdomain.com;
-    return 301 https://$host$request_uri;
-}
+Compose mounts the named `jarvis-data` volume at `/app/data`. This contains two SQLite databases, project/reminder JSON files, uploads, and generated files. See [DATABASE.md](DATABASE.md); backing up only `jarvis_memory.db` is insufficient.
 
-server {
-    listen 443 ssl http2;
-    server_name jarvis.yourdomain.com;
+## Exposure and operations
 
-    ssl_certificate /etc/letsencrypt/live/jarvis.yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/jarvis.yourdomain.com/privkey.pem;
-
-    # Frontend Static Distribution
-    location / {
-        root /var/www/jarvis/dist;
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Backend API Proxy
-    location /api/ {
-        proxy_pass http://127.0.0.1:8765/api/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # Audio streaming & long document generation timeouts
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-    }
-}
-```
-
----
-
-## 5. Backup & Persistence
-- **Database**: The SQLite database is located at `./data/jarvis_memory.db` (or `/app/data/jarvis_memory.db` in Docker). Backup regularly.
-- **Generated Artifacts & Uploads**: Located under `./data/workspace` and `./data/generated_files`.
+- Configure a strong `JARVIS_API_KEY`; do not rely on the generated ephemeral key, which is currently logged if no key is set.
+- Configure exact allowed origins and TLS at a trusted reverse proxy before remote access.
+- The code-execution service is not an OS/container sandbox. Do not expose it to untrusted users.
+- No production readiness, scaling, backup automation, secret-manager integration, or high-availability guarantee is asserted by this repository.

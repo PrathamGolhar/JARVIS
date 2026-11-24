@@ -1,3 +1,6 @@
+import json
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -107,7 +110,23 @@ def test_math_engine_symbolic_and_numerical() -> None:
     assert "6*x" in diff_res["derivative"]
 
 
-def test_multi_document_reasoner() -> None:
+def test_multi_document_reasoner(monkeypatch) -> None:
+    comparison = {
+        "topic": "Architecture Tradeoffs",
+        "commonalities": ["Both address service architecture."],
+        "differences": ["One emphasizes scale; the other emphasizes operations."],
+        "comparisonTable": [{"dimension": "Focus", "doc1": "Scale", "doc2": "Operations"}],
+        "synthesisMarkdown": "# Architecture Tradeoffs\n\nThe reports differ in emphasis.",
+    }
+
+    class StubProvider:
+        def chat(self, **kwargs):
+            return SimpleNamespace(content=json.dumps(comparison))
+
+    monkeypatch.setattr(
+        "app.services.file_processing.multi_doc.get_ai_provider",
+        lambda: StubProvider(),
+    )
     docs = [
         {"filename": "Report_A.pdf", "content": "Microservices enhance scalability through decoupled services."},
         {"filename": "Report_B.pdf", "content": "Monolithic architectures reduce operational latency for small teams."},
@@ -117,6 +136,8 @@ def test_multi_document_reasoner() -> None:
     assert len(res.commonalities) >= 1
     assert len(res.differences) >= 1
     assert res.synthesis_markdown
+    assert res.status == "success"
+    assert res.confidence is None
 
 
 def test_plugin_sdk_registration_and_execution() -> None:

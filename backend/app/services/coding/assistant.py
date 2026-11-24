@@ -51,17 +51,27 @@ def analyze_code_task(
             content = content[:-3]
 
         data = json.loads(content.strip())
+        if not isinstance(data, dict):
+            raise ValueError("The provider response was not a JSON object.")
+        analysis = data.get("analysis")
+        if not isinstance(analysis, str) or not analysis.strip():
+            raise ValueError("The provider response did not contain an analysis.")
+        fixed_code = data.get("fixedOrImprovedCode", "")
+        test_code = data.get("testCode", "")
+        if task in {"debug", "refactor", "optimize"} and (
+            not isinstance(fixed_code, str) or not fixed_code.strip()
+        ):
+            raise ValueError(f"The provider response did not include code for task '{task}'.")
+        if task == "generate_tests" and (
+            not isinstance(test_code, str) or not test_code.strip()
+        ):
+            raise ValueError("The provider response did not include generated tests.")
         return CodeAnalysisResponse(
-            analysis=data.get("analysis", "Analysis completed."),
-            fixedOrImprovedCode=data.get("fixedOrImprovedCode", code),
-            testCode=data.get("testCode", ""),
-            complexityScore=data.get("complexityScore", "N/A"),
+            analysis=analysis,
+            fixedOrImprovedCode=fixed_code if isinstance(fixed_code, str) else "",
+            testCode=test_code if isinstance(test_code, str) else "",
+            complexityScore=data.get("complexityScore", ""),
         )
     except Exception as exc:
-        logger.warning("Code assistant fallback: %s", exc)
-        return CodeAnalysisResponse(
-            analysis=f"I inspected the {language} code. Syntax appears valid.",
-            fixedOrImprovedCode=code,
-            testCode=f"# Automated test verification for {language}\ndef test_basic():\n    assert True",
-            complexityScore="O(1)",
-        )
+        logger.warning("Code assistant analysis failed: %s", exc)
+        raise RuntimeError("Code analysis failed; no analysis or test result was generated.") from exc

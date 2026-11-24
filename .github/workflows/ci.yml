@@ -26,14 +26,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ hashFiles('backend/requirements.txt') }}
+          key: pip-${{ hashFiles('backend/requirements.txt', 'backend/requirements-dev.txt') }}
           restore-keys: pip-
 
-      - name: Install runtime + test dependencies
+      - name: Install backend development dependencies
         run: |
           pip install --upgrade pip
-          pip install -r backend/requirements.txt
-          pip install pytest pytest-asyncio httpx
+          pip install -r backend/requirements-dev.txt
 
       - name: Run backend test suite
         env:
@@ -58,18 +57,18 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: jarvis-frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies (frozen lockfile)
-        working-directory: jarvis-frontend
+        working-directory: frontend
         run: npm ci
 
       - name: TypeScript check + production build
-        working-directory: jarvis-frontend
+        working-directory: frontend
         run: npm run build
 
       - name: Verify build artifact integrity
-        working-directory: jarvis-frontend
+        working-directory: frontend
         run: |
           test -f dist/index.html
           test -s dist/index.html

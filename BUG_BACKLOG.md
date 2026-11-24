@@ -1,5 +1,7 @@
 # JARVIS — Bug Backlog
 
+> **Historical snapshot:** This backlog records findings from its stated audit date. Items have not been revalidated against the current workspace.
+
 **Audit Date:** 2026-11-23  
 **Status:** All bugs confirmed by code inspection. Items marked [UNVERIFIED] require runtime testing to confirm.
 
