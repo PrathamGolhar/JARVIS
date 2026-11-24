@@ -116,6 +116,18 @@ class Settings:
             )
         )
     )
+    auth_enabled: bool = field(
+        default_factory=lambda: parse_bool(
+            _get_first_env(
+                "JARVIS_AUTH_ENABLED",
+                default="true" if _get_first_env("JARVIS_ENV", default="development") != "test" else "false",
+            )
+        )
+    )
+    api_key: str = field(
+        default_factory=lambda: _get_first_env("JARVIS_API_KEY", "API_KEY", default="")
+    )
+    emergency_stop_active: bool = False
     local_actions_enabled: bool = field(
         default_factory=lambda: parse_bool(_get_first_env("JARVIS_LOCAL_ACTIONS_ENABLED", default="true"))
     )
@@ -146,6 +158,11 @@ class Settings:
         self.gemini_api_key = value
 
     def __post_init__(self) -> None:
+        valid_modes = {"read_only", "assisted", "full_control"}
+        if self.permission_mode not in valid_modes:
+            # Fail closed: default to read_only if invalid or unknown mode provided
+            self.permission_mode = "read_only"
+
         custom_uploads = os.getenv("JARVIS_UPLOAD_ROOT")
         custom_generated = os.getenv("JARVIS_GENERATED_ROOT")
 

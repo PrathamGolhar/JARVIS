@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas import MCQItem, StudyNotesRequest, StudyNotesResponse
 from app.services.agents.study_agent import study_agent
+from app.services.auth import require_auth
 from app.services.study_mode.exam_prep import generate_exam_mcqs
 from app.services.study_mode.notes_generator import generate_structured_study_notes
 
-router = APIRouter(prefix="/api/study", tags=["study"])
+router = APIRouter(prefix="/api/study", tags=["study"], dependencies=[Depends(require_auth)])
 
 
 @router.post("/notes", response_model=StudyNotesResponse)

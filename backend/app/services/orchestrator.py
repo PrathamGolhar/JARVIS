@@ -8,9 +8,11 @@ from uuid import UUID
 from app.schemas import AssistantMode, Citation, PendingAction, PlanStep, ToolEvent
 from app.services.agents.planner import planning_engine
 from app.services.agents.verifier import output_verifier
-from app.services.ai.factory import execute_with_failover, get_ai_provider
+from app.services.ai.factory import execute_with_failover, execute_with_failover_async, get_ai_provider
+from app.services.confirmation import confirmation_manager
 from app.services.memory import memory_store
 from app.services.memory.vector_store import rag_store
+from app.services.permissions import validate_tool_approval
 from app.services.projects.manager import project_manager
 from app.services.tools.registry import TOOLS_SCHEMA, execute_tool_call, is_high_impact_tool
 from app.settings import settings
@@ -71,47 +73,24 @@ class OrchestratorError(RuntimeError):
         self.status_code = status_code
 
 
-_PENDING_CONFIRMATIONS: dict[str, PendingConfirmation] = {}
-
-
-def create_confirmation_action(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    action_id = f"act_{secrets.token_hex(8)}"
-    label = f"Execute {tool_name}"
-    description = f"Confirm execution of {tool_name}"
-
-    if tool_name == "open_application":
-        app_id = arguments.get("app_id", "application")
-        label = f"Launch {app_id.replace('_', ' ').title()}"
-        description = f"Launch desktop application: {app_id}"
-    elif tool_name == "write_file":
-        target = arguments.get("file_path", "file")
-        label = f"Write {target}"
-        description = f"Create/update file at workspace path: {target}"
-
-    pending = PendingConfirmation(
-        action_id=action_id,
+def create_confirmation_action(
+    tool_name: str,
+    arguments: dict[str, Any],
+    session_id: str = "general",
+) -> dict[str, Any]:
+    return confirmation_manager.create_confirmation(
         tool_name=tool_name,
         arguments=arguments,
-        label=label,
-        description=description,
+        session_id=session_id,
     )
-    _PENDING_CONFIRMATIONS[action_id] = pending
-
-    return {
-        "actionId": action_id,
-        "toolName": tool_name,
-        "arguments": arguments,
-        "label": label,
-        "description": description,
-        "requiresConfirmation": True,
-    }
 
 
-def execute_confirmed_action(action_id: str) -> dict[str, Any]:
-    pending = _PENDING_CONFIRMATIONS.pop(action_id, None)
-    if not pending:
-        raise OrchestratorError("Invalid or expired action confirmation token.", status_code=404)
-    return execute_tool_call(pending.tool_name, pending.arguments)
+def execute_confirmed_action(action_id: str, session_id: str = "general") -> dict[str, Any]:
+    try:
+        pending = confirmation_manager.consume_confirmation(action_id, session_id=session_id)
+        return execute_tool_call(pending.tool_name, pending.arguments, session_id=session_id)
+    except ValueError as exc:
+        raise OrchestratorError(str(exc), status_code=404) from exc
 
 
 def run_orchestration(
@@ -128,7 +107,7 @@ def run_orchestration(
 
     # 1. Handle confirmation execution if user confirmed a pending action
     if confirmed_action_id:
-        result = execute_confirmed_action(confirmed_action_id)
+        result = execute_confirmed_action(confirmed_action_id, session_id=sid)
         reply = result.get("message", "Action completed successfully for you, Master.")
         memory_store.append_message(sid, "assistant", reply)
         return OrchestratorResponse(
@@ -142,12 +121,12 @@ def run_orchestration(
     plan = planning_engine.detect_intent_and_plan(user_text, current_mode=mode)
     plan_steps_data = [s.model_dump(by_alias=True) for s in plan.steps]
 
-    # 3. RAG Semantic Retrieval Context
+    # 3. RAG Semantic Retrieval Context (Scoped to current session to prevent cross-session leakage)
     rag_context = ""
-    rag_matches = rag_store.search(user_text, top_k=3)
+    rag_matches = rag_store.search(user_text, top_k=3, session_id=sid)
     if rag_matches:
-        rag_context = "\n\nRetrieved Relevant Document Chunks (RAG):\n" + "\n".join(
-            f"[{m['filename']}] {m['text'][:400]}..." for m in rag_matches
+        rag_context = "\n\nRetrieved Grounded Document Chunks (RAG):\n" + "\n".join(
+            f"[{m['filename']} | Chunk {m.get('chunk_index', 0)}] {m['text'][:400]}..." for m in rag_matches
         )
 
     # 4. Project Context
@@ -213,7 +192,7 @@ def run_orchestration(
 
                 # Check if high-impact action requires user confirmation (under non-full_control mode)
                 if is_high_impact_tool(tool_name) and settings.permission_mode != "full_control":
-                    pending_action = create_confirmation_action(tool_name, args_dict)
+                    pending_action = create_confirmation_action(tool_name, args_dict, session_id=sid)
                     reply = f"Master, I have prepared the plan to {pending_action['label'].lower()}. Please confirm to proceed."
                     memory_store.append_message(sid, "user", user_text)
                     memory_store.append_message(sid, "assistant", reply)
@@ -226,8 +205,8 @@ def run_orchestration(
                         tool_events=[{"toolName": tool_name, "arguments": args_dict, "requiresConfirmation": True}],
                     )
 
-                # Low-risk / Auto-approved: Execute tool
-                tool_result = execute_tool_call(tool_name, args_dict)
+                # Low-risk / Auto-approved: Execute tool with permission enforcement
+                tool_result = execute_tool_call(tool_name, args_dict, session_id=sid)
                 tool_events.append({
                     "toolName": tool_name,
                     "arguments": args_dict,
@@ -285,6 +264,181 @@ def run_orchestration(
         )
 
     # Fallback if iterations exceeded
+    fallback_reply = "Master, all requested operations and tool workflows have been completed."
+    memory_store.append_message(sid, "user", user_text)
+    memory_store.append_message(sid, "assistant", fallback_reply)
+    return OrchestratorResponse(
+        reply=fallback_reply,
+        session_id=sid,
+        mode=plan.mode,
+        plan_steps=plan_steps_data,
+        tool_events=tool_events,
+        citations=citations,
+        generated_files=generated_files,
+    )
+
+
+async def run_orchestration_async(
+    session_id: str | UUID,
+    user_text: str,
+    mode: AssistantMode = "general",
+    project_id: str | None = None,
+    confirmed_action_id: str | None = None,
+) -> OrchestratorResponse:
+    """
+    Asynchronous AI Orchestration entrypoint preventing event loop blocking.
+    """
+    sid = str(session_id)
+
+    # 1. Handle confirmation execution if user confirmed a pending action
+    if confirmed_action_id:
+        result = execute_confirmed_action(confirmed_action_id, session_id=sid)
+        reply = result.get("message", "Action completed successfully for you, Master.")
+        memory_store.append_message(sid, "assistant", reply)
+        return OrchestratorResponse(
+            reply=reply,
+            session_id=sid,
+            mode=mode,
+            tool_events=[{"tool_name": "confirmed_action", "result": result}],
+        )
+
+    # 2. Intent Detection & Execution Plan
+    plan = planning_engine.detect_intent_and_plan(user_text, current_mode=mode)
+    plan_steps_data = [s.model_dump(by_alias=True) for s in plan.steps]
+
+    # 3. RAG Semantic Retrieval Context (Scoped to current session to prevent cross-session leakage)
+    rag_context = ""
+    rag_matches = rag_store.search(user_text, top_k=3, session_id=sid)
+    if rag_matches:
+        rag_context = "\n\nRetrieved Grounded Document Chunks (RAG):\n" + "\n".join(
+            f"[{m['filename']} | Chunk {m.get('chunk_index', 0)}] {m['text'][:400]}..." for m in rag_matches
+        )
+
+    # 4. Project Context
+    proj_context = ""
+    if project_id:
+        proj_context = "\n\n" + project_manager.build_project_context(project_id)
+
+    # 5. Build dynamic system context
+    system_prompt = (
+        f"{BASE_SYSTEM_INSTRUCTIONS}\n\n"
+        f"Active Mode: {plan.mode.upper()}\n"
+        f"{memory_store.build_system_context()}"
+        f"{proj_context}"
+        f"{rag_context}"
+    )
+
+    history = memory_store.get_history(sid, limit=12)
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        *history,
+        {"role": "user", "content": user_text},
+    ]
+
+    tool_events: list[dict[str, Any]] = []
+    citations: list[dict[str, str]] = []
+    generated_files: list[dict[str, Any]] = []
+    pending_action: dict[str, Any] | None = None
+
+    for _ in range(settings.max_tool_iterations):
+        try:
+            ai_res, active_provider = await execute_with_failover_async(
+                messages=messages,
+                tools=TOOLS_SCHEMA,
+                temperature=0.3,
+                max_tokens=800,
+            )
+        except Exception as exc:
+            logger.error("Unexpected orchestration error: %s", exc, exc_info=True)
+            raise OrchestratorError(f"AI orchestration failed: {exc}", status_code=500) from exc
+
+        tool_calls = ai_res.tool_calls
+
+        # Case A: Model wants to execute one or more tools
+        if tool_calls:
+            messages.append({
+                "role": "assistant",
+                "content": ai_res.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                    }
+                    for tc in tool_calls
+                ],
+            })
+
+            for call in tool_calls:
+                tool_name = call.name
+                args_dict = call.arguments
+
+                if is_high_impact_tool(tool_name) and settings.permission_mode != "full_control":
+                    pending_action = create_confirmation_action(tool_name, args_dict, session_id=sid)
+                    reply = f"Master, I have prepared the plan to {pending_action['label'].lower()}. Please confirm to proceed."
+                    memory_store.append_message(sid, "user", user_text)
+                    memory_store.append_message(sid, "assistant", reply)
+                    return OrchestratorResponse(
+                        reply=reply,
+                        session_id=sid,
+                        mode=plan.mode,
+                        plan_steps=plan_steps_data,
+                        pending_action=pending_action,
+                        tool_events=[{"toolName": tool_name, "arguments": args_dict, "requiresConfirmation": True}],
+                    )
+
+                tool_result = execute_tool_call(tool_name, args_dict, session_id=sid)
+                tool_events.append({
+                    "toolName": tool_name,
+                    "arguments": args_dict,
+                    "result": tool_result,
+                })
+
+                if tool_result.get("file"):
+                    finfo = tool_result["file"]
+                    verified = output_verifier.verify_generated_file(settings.generated_dir / finfo.get("filename", ""))
+                    if verified.get("verified"):
+                        generated_files.append(finfo)
+
+                if tool_name == "web_search" and tool_result.get("ok"):
+                    for item in tool_result.get("results", []):
+                        if item.get("url") and item.get("title"):
+                            citations.append({
+                                "title": item["title"],
+                                "url": item["url"],
+                                "domain": item.get("domain", ""),
+                            })
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": tool_name,
+                    "content": json.dumps(tool_result, ensure_ascii=False),
+                })
+
+            continue
+
+        # Case B: Final response
+        content = ai_res.content.strip() if ai_res.content else "Master, I have processed your request."
+        for s in plan_steps_data:
+            s["status"] = "completed"
+
+        memory_store.append_message(sid, "user", user_text)
+        memory_store.append_message(sid, "assistant", content)
+
+        return OrchestratorResponse(
+            reply=content,
+            session_id=sid,
+            mode=plan.mode,
+            plan_steps=plan_steps_data,
+            tool_events=tool_events,
+            citations=citations,
+            pending_action=None,
+            generated_files=generated_files,
+            turns_retained=len(memory_store.get_history(sid)) // 2,
+        )
+
     fallback_reply = "Master, all requested operations and tool workflows have been completed."
     memory_store.append_message(sid, "user", user_text)
     memory_store.append_message(sid, "assistant", fallback_reply)

@@ -1,6 +1,6 @@
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.schemas import (
     LocalActionExecuteRequest,
@@ -9,9 +9,11 @@ from app.schemas import (
     LocalActionPlanResponse,
     LocalActionStatusResponse,
 )
+from app.services.auth import require_auth
 from app.services.local_actions import execute_local_action, local_action_bridge_available, make_local_action_plan
+from app.settings import settings
 
-router = APIRouter(prefix="/api/local-actions", tags=["local-actions"])
+router = APIRouter(prefix="/api/local-actions", tags=["local-actions"], dependencies=[Depends(require_auth)])
 
 
 def require_local_origin(request: Request) -> None:
@@ -20,7 +22,10 @@ def require_local_origin(request: Request) -> None:
         return
     hostname = urlparse(origin).hostname
     if hostname not in {"localhost", "127.0.0.1", "::1"}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Local actions accept requests only from a local browser origin.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local actions accept requests only from a local browser origin.",
+        )
 
 
 @router.get("/status", response_model=LocalActionStatusResponse)
@@ -32,6 +37,12 @@ async def local_action_status(request: Request) -> LocalActionStatusResponse:
 @router.post("/plan", response_model=LocalActionPlanResponse)
 async def plan_local_action(request: Request, body: LocalActionPlanRequest) -> LocalActionPlanResponse:
     require_local_origin(request)
+    if getattr(settings, "permission_mode", "assisted") == "read_only":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Application launching is disabled in 'read_only' permission mode.",
+        )
+
     if not local_action_bridge_available():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Local actions are disabled or unavailable.")
     plan = make_local_action_plan(body.text)
@@ -48,6 +59,19 @@ async def plan_local_action(request: Request, body: LocalActionPlanRequest) -> L
 @router.post("/execute", response_model=LocalActionExecuteResponse)
 async def execute_planned_local_action(request: Request, body: LocalActionExecuteRequest) -> LocalActionExecuteResponse:
     require_local_origin(request)
+
+    if getattr(settings, "permission_mode", "assisted") == "read_only":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Application launching is disabled in 'read_only' permission mode.",
+        )
+
+    if getattr(settings, "emergency_stop_active", False):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Emergency stop is active: Application launching halted.",
+        )
+
     try:
         app = execute_local_action(body.app_id)
     except RuntimeError as error:
@@ -57,4 +81,3 @@ async def execute_planned_local_action(request: Request, body: LocalActionExecut
     except OSError as error:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Windows could not open {body.app_id}.") from error
     return LocalActionExecuteResponse(ok=True, message=f"Opening {app.label} for you, Master.")
-

@@ -25,9 +25,9 @@ def test_execute_python_code_timeout() -> None:
     assert "timed out" in res.stderr
 
 
-def test_execute_python_code_no_env_secrets_leakage() -> None:
+def test_execute_python_code_blocks_os_import() -> None:
     code = "import os\nprint('API_KEY=' + str(os.environ.get('JARVIS_GEMINI_API_KEY', 'NONE')))"
     res = execute_sandboxed_code(code=code, language="python")
-    assert res.ok is True
-    assert "API_KEY=NONE" in res.stdout
+    assert res.ok is False
+    assert "security policy" in res.stderr.lower() or "restricted" in res.stderr.lower()
 

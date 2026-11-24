@@ -1,6 +1,9 @@
+import concurrent.futures
 from enum import Enum
 import json
 import logging
+import secrets
+import time
 from typing import Any
 
 from app.services.coding.sandbox import execute_sandboxed_code
@@ -275,129 +278,328 @@ TOOL_RISK_MAP = {
     "generate_pdf_report": RiskLevel.LOW,
     "generate_word_doc": RiskLevel.LOW,
     "deep_web_research": RiskLevel.LOW,
-    "execute_python_code": RiskLevel.LOW,
     "set_user_preference": RiskLevel.LOW,
     "create_reminder": RiskLevel.LOW,
+    "execute_python_code": RiskLevel.HIGH,
     "write_file": RiskLevel.HIGH,
     "open_application": RiskLevel.HIGH,
 }
 
 
 def is_high_impact_tool(tool_name: str) -> bool:
-    return TOOL_RISK_MAP.get(tool_name, RiskLevel.LOW) == RiskLevel.HIGH
+    """Check if tool is high impact. Unknown tools FAIL-CLOSED to high impact."""
+    return TOOL_RISK_MAP.get(tool_name, RiskLevel.HIGH) == RiskLevel.HIGH
 
 
-def execute_tool_call(tool_name: str, raw_arguments: str | dict[str, Any]) -> dict[str, Any]:
-    """Execute a registered tool with parsed arguments and error shielding."""
+def validate_tool_arguments(tool_name: str, args: dict[str, Any]) -> tuple[bool, str]:
+    """Validate tool arguments against strict schema constraints."""
+    if not isinstance(args, dict):
+        return False, "Tool arguments must be a JSON dictionary."
+
+    if tool_name == "web_search":
+        q = args.get("query")
+        if not q or not isinstance(q, str) or not q.strip():
+            return False, "Argument 'query' must be a non-empty string."
+
+    elif tool_name == "read_webpage":
+        u = args.get("url")
+        if not u or not isinstance(u, str) or not u.strip():
+            return False, "Argument 'url' must be a valid URL string."
+
+    elif tool_name == "calculator":
+        expr = args.get("expression")
+        if not expr or not isinstance(expr, str) or not expr.strip():
+            return False, "Argument 'expression' must be a non-empty mathematical expression string."
+
+    elif tool_name == "get_weather":
+        loc = args.get("location")
+        if not loc or not isinstance(loc, str) or not loc.strip():
+            return False, "Argument 'location' must be a non-empty location string."
+
+    elif tool_name == "search_files":
+        pat = args.get("pattern")
+        if not isinstance(pat, str):
+            return False, "Argument 'pattern' must be a search string."
+
+    elif tool_name == "read_file":
+        fp = args.get("file_path")
+        if not fp or not isinstance(fp, str) or not fp.strip():
+            return False, "Argument 'file_path' must be a valid file path string."
+
+    elif tool_name == "write_file":
+        fp = args.get("file_path")
+        content = args.get("content")
+        if not fp or not isinstance(fp, str) or not fp.strip():
+            return False, "Argument 'file_path' must be a valid file path string."
+        if content is None or not isinstance(content, str):
+            return False, "Argument 'content' must be a string."
+
+    elif tool_name == "open_application":
+        app_id = args.get("app_id")
+        allowed = {"calculator", "notepad", "file_explorer", "vscode"}
+        if app_id not in allowed:
+            return False, f"Argument 'app_id' must be one of: {', '.join(sorted(allowed))}."
+
+    elif tool_name == "execute_python_code":
+        code = args.get("code")
+        if not code or not isinstance(code, str) or not code.strip():
+            return False, "Argument 'code' must be a non-empty Python code string."
+
+    elif tool_name == "set_user_preference":
+        k = args.get("key")
+        v = args.get("value")
+        if not k or not isinstance(k, str) or not v or not isinstance(v, str):
+            return False, "Arguments 'key' and 'value' must be non-empty strings."
+
+    elif tool_name == "create_reminder":
+        title = args.get("title")
+        sch = args.get("scheduled_time")
+        if not title or not isinstance(title, str) or not sch or not isinstance(sch, str):
+            return False, "Arguments 'title' and 'scheduled_time' must be strings."
+
+    elif tool_name == "generate_presentation":
+        top = args.get("topic")
+        if not top or not isinstance(top, str) or not top.strip():
+            return False, "Argument 'topic' must be a non-empty string."
+
+    elif tool_name == "generate_pdf_report":
+        title = args.get("title")
+        content = args.get("content_markdown")
+        if not title or not isinstance(title, str) or not content or not isinstance(content, str):
+            return False, "Arguments 'title' and 'content_markdown' must be strings."
+
+    elif tool_name == "generate_word_doc":
+        title = args.get("title")
+        content = args.get("content_markdown")
+        if not title or not isinstance(title, str) or not content or not isinstance(content, str):
+            return False, "Arguments 'title' and 'content_markdown' must be strings."
+
+    elif tool_name == "deep_web_research":
+        q = args.get("query")
+        if not q or not isinstance(q, str) or not q.strip():
+            return False, "Argument 'query' must be a non-empty string."
+
+    return True, ""
+
+
+TOOL_TIMEOUTS: dict[str, float] = {
+    "web_search": 20.0,
+    "read_webpage": 20.0,
+    "calculator": 5.0,
+    "get_weather": 10.0,
+    "system_diagnostics": 10.0,
+    "search_files": 15.0,
+    "read_file": 10.0,
+    "write_file": 10.0,
+    "open_application": 10.0,
+    "generate_presentation": 30.0,
+    "generate_pdf_report": 30.0,
+    "execute_python_code": 20.0,
+    "set_user_preference": 5.0,
+    "create_reminder": 5.0,
+    "generate_word_doc": 30.0,
+    "deep_web_research": 45.0,
+}
+DEFAULT_TOOL_TIMEOUT: float = 20.0
+
+
+def _dispatch_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Execute raw tool operation synchronously."""
+    if tool_name == "web_search":
+        return live_web_search(args.get("query", ""))
+
+    if tool_name == "read_webpage":
+        return read_webpage_content(args.get("url", ""))
+
+    if tool_name == "calculator":
+        return evaluate_expression(args.get("expression", ""))
+
+    if tool_name == "get_weather":
+        return get_live_weather(args.get("location", ""))
+
+    if tool_name == "system_diagnostics":
+        return get_system_diagnostics()
+
+    if tool_name == "search_files":
+        return search_workspace_files(args.get("pattern", ""))
+
+    if tool_name == "read_file":
+        return read_workspace_file(args.get("file_path", ""))
+
+    if tool_name == "write_file":
+        return write_workspace_file(args.get("file_path", ""), args.get("content", ""))
+
+    if tool_name == "open_application":
+        app_id = args.get("app_id")
+        app = execute_local_action(app_id)  # type: ignore[arg-type]
+        return {"ok": True, "app": app.label, "message": f"Opening {app.label} for you, Master."}
+
+    if tool_name == "generate_presentation":
+        from app.services.agents.document_agent import document_agent
+        res = document_agent.create_presentation_from_prompt(
+            topic=args.get("topic", "Presentation"),
+            theme_color=args.get("theme_color", "cyan"),
+        )
+        return {"ok": True, "file": res["file"], "message": f"PowerPoint '{res['file']['filename']}' generated successfully."}
+
+    if tool_name == "generate_pdf_report":
+        pdf_path = generate_pdf_document(
+            title=args.get("title", "Report"),
+            content_markdown=args.get("content_markdown", ""),
+            subtitle=args.get("subtitle", ""),
+        )
+        return {
+            "ok": True,
+            "file": {
+                "filename": pdf_path.name,
+                "downloadUrl": f"/api/files/download/{pdf_path.name}",
+                "sizeBytes": pdf_path.stat().st_size,
+            },
+            "message": f"PDF report '{pdf_path.name}' compiled successfully.",
+        }
+
+    if tool_name == "execute_python_code":
+        res = execute_sandboxed_code(args.get("code", ""))
+        return res.model_dump(by_alias=True)
+
+    if tool_name == "set_user_preference":
+        item_res = memory_store.set_memory(args.get("key", ""), args.get("value", ""))
+        item = item_res[0] if isinstance(item_res, tuple) else item_res
+        return {"ok": True, "message": f"Remembered '{item.key}' in long-term memory."}
+
+    if tool_name == "create_reminder":
+        rem = reminder_service.add_reminder(args.get("title", ""), args.get("scheduled_time", ""))
+        return {"ok": True, "reminder": rem.model_dump(by_alias=True), "message": f"Reminder '{rem.title}' scheduled for {rem.scheduled_time}."}
+
+    if tool_name == "generate_word_doc":
+        docx_path = generate_docx_document(
+            title=args.get("title", "Document"),
+            content_markdown=args.get("content_markdown", ""),
+            subtitle=args.get("subtitle", ""),
+            author=args.get("author", "JARVIS"),
+        )
+        return {
+            "ok": True,
+            "file": {
+                "filename": docx_path.name,
+                "downloadUrl": f"/api/files/download/{docx_path.name}",
+                "sizeBytes": docx_path.stat().st_size,
+            },
+            "message": f"Word document '{docx_path.name}' generated successfully.",
+        }
+
+    if tool_name == "deep_web_research":
+        research = perform_deep_research(
+            query=args.get("query", ""),
+            depth=args.get("depth", "deep"),
+        )
+        findings_text = getattr(research, "findings_markdown", getattr(research, "findingsMarkdown", ""))
+        takeaways = getattr(research, "key_takeaways", getattr(research, "keyTakeaways", []))
+        return {
+            "ok": True,
+            "topic": research.topic,
+            "summary": research.summary,
+            "findings": findings_text[:3000],
+            "keyTakeaways": takeaways,
+            "citations": [c.model_dump() for c in research.citations[:8]],
+            "message": f"Deep research on '{research.topic}' completed with {len(research.citations)} verified sources.",
+        }
+
+    return {"ok": False, "error": f"Tool '{tool_name}' is not recognized."}
+
+
+def execute_tool_call(
+    tool_name: str,
+    raw_arguments: str | dict[str, Any],
+    session_id: str = "general",
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
+    """Execute a registered tool with strict schema validation, permission checks, timeouts, and error shielding."""
+    from app.services.permissions import validate_tool_approval
+
+    start_time = time.perf_counter()
+    trace_id = f"tool_{secrets.token_hex(4)}"
+
     if isinstance(raw_arguments, str):
         try:
             args = json.loads(raw_arguments) if raw_arguments.strip() else {}
         except Exception:
-            args = {}
+            return {
+                "ok": False,
+                "tool": tool_name,
+                "error": f"Invalid JSON arguments for tool '{tool_name}'.",
+                "traceId": trace_id,
+                "executionTimeMs": round((time.perf_counter() - start_time) * 1000, 2),
+            }
     else:
         args = raw_arguments or {}
 
+    # 1. Authoritative Permission Verification Immediately Before Execution
+    is_approved, requires_confirm, perm_msg = validate_tool_approval(
+        tool_name,
+        arguments=args,
+        session_id=session_id,
+    )
+    if not is_approved:
+        return {
+            "ok": False,
+            "tool": tool_name,
+            "error": perm_msg,
+            "traceId": trace_id,
+            "executionTimeMs": round((time.perf_counter() - start_time) * 1000, 2),
+        }
+
+    # 2. Strict Schema Validation
+    is_valid, val_error = validate_tool_arguments(tool_name, args)
+    if not is_valid:
+        return {
+            "ok": False,
+            "tool": tool_name,
+            "error": f"Schema validation error: {val_error}",
+            "traceId": trace_id,
+            "executionTimeMs": round((time.perf_counter() - start_time) * 1000, 2),
+        }
+
+    timeout = timeout_seconds or TOOL_TIMEOUTS.get(tool_name, DEFAULT_TOOL_TIMEOUT)
+    logger.info("Executing tool %s [trace=%s, timeout=%.1fs]", tool_name, trace_id, timeout)
+
     try:
-        if tool_name == "web_search":
-            return live_web_search(args.get("query", ""))
-
-        if tool_name == "read_webpage":
-            return read_webpage_content(args.get("url", ""))
-
-        if tool_name == "calculator":
-            return evaluate_expression(args.get("expression", ""))
-
-        if tool_name == "get_weather":
-            return get_live_weather(args.get("location", ""))
-
-        if tool_name == "system_diagnostics":
-            return get_system_diagnostics()
-
-        if tool_name == "search_files":
-            return search_workspace_files(args.get("pattern", ""))
-
-        if tool_name == "read_file":
-            return read_workspace_file(args.get("file_path", ""))
-
-        if tool_name == "write_file":
-            return write_workspace_file(args.get("file_path", ""), args.get("content", ""))
-
-        if tool_name == "open_application":
-            app_id = args.get("app_id")
-            app = execute_local_action(app_id)  # type: ignore[arg-type]
-            return {"ok": True, "app": app.label, "message": f"Opening {app.label} for you, Master."}
-
-        if tool_name == "generate_presentation":
-            from app.services.agents.document_agent import document_agent
-            res = document_agent.create_presentation_from_prompt(
-                topic=args.get("topic", "Presentation"),
-                theme_color=args.get("theme_color", "cyan"),
-            )
-            return {"ok": True, "file": res["file"], "message": f"PowerPoint '{res['file']['filename']}' generated successfully."}
-
-        if tool_name == "generate_pdf_report":
-            pdf_path = generate_pdf_document(
-                title=args.get("title", "Report"),
-                content_markdown=args.get("content_markdown", ""),
-                subtitle=args.get("subtitle", ""),
-            )
-            return {
-                "ok": True,
-                "file": {
-                    "filename": pdf_path.name,
-                    "downloadUrl": f"/api/files/download/{pdf_path.name}",
-                    "sizeBytes": pdf_path.stat().st_size,
-                },
-                "message": f"PDF report '{pdf_path.name}' compiled successfully.",
-            }
-
-        if tool_name == "execute_python_code":
-            res = execute_sandboxed_code(args.get("code", ""))
-            return res.model_dump(by_alias=True)
-
-        if tool_name == "set_user_preference":
-            item = memory_store.set_memory(args.get("key", ""), args.get("value", ""))
-            return {"ok": True, "message": f"Remembered '{item.key}' in long-term memory."}
-
-        if tool_name == "create_reminder":
-            rem = reminder_service.add_reminder(args.get("title", ""), args.get("scheduled_time", ""))
-            return {"ok": True, "reminder": rem.model_dump(by_alias=True), "message": f"Reminder '{rem.title}' scheduled for {rem.scheduled_time}."}
-
-        if tool_name == "generate_word_doc":
-            docx_path = generate_docx_document(
-                title=args.get("title", "Document"),
-                content_markdown=args.get("content_markdown", ""),
-                subtitle=args.get("subtitle", ""),
-                author=args.get("author", "JARVIS"),
-            )
-            return {
-                "ok": True,
-                "file": {
-                    "filename": docx_path.name,
-                    "downloadUrl": f"/api/files/download/{docx_path.name}",
-                    "sizeBytes": docx_path.stat().st_size,
-                },
-                "message": f"Word document '{docx_path.name}' generated successfully.",
-            }
-
-        if tool_name == "deep_web_research":
-            research = perform_deep_research(
-                query=args.get("query", ""),
-                depth=args.get("depth", "deep"),
-            )
-            findings_text = getattr(research, "findings_markdown", getattr(research, "findingsMarkdown", ""))
-            takeaways = getattr(research, "key_takeaways", getattr(research, "keyTakeaways", []))
-            return {
-                "ok": True,
-                "topic": research.topic,
-                "summary": research.summary,
-                "findings": findings_text[:3000],
-                "keyTakeaways": takeaways,
-                "citations": [c.model_dump() for c in research.citations[:8]],
-                "message": f"Deep research on '{research.topic}' completed with {len(research.citations)} verified sources.",
-            }
-
-        return {"ok": False, "error": f"Tool '{tool_name}' is not recognized."}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_dispatch_tool, tool_name, args)
+            raw_result = future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        logger.warning("Tool %s timed out after %.1fs [trace=%s]", tool_name, timeout, trace_id)
+        return {
+            "ok": False,
+            "tool": tool_name,
+            "error": f"Tool '{tool_name}' execution timed out after {timeout:.1f} seconds.",
+            "traceId": trace_id,
+            "executionTimeMs": duration_ms,
+        }
     except Exception as exc:
-        logger.warning("Tool %s execution failed: %s", tool_name, exc)
-        return {"ok": False, "tool": tool_name, "error": f"Tool execution failed: {exc}"}
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        logger.warning("Tool %s execution failed: %s [trace=%s]", tool_name, exc, trace_id)
+        return {
+            "ok": False,
+            "tool": tool_name,
+            "error": f"Tool execution failed: {exc}",
+            "traceId": trace_id,
+            "executionTimeMs": duration_ms,
+        }
+
+    duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    # Ensure raw_result has tool, traceId, and executionTimeMs metadata attached
+    if isinstance(raw_result, dict):
+        raw_result.setdefault("tool", tool_name)
+        raw_result.setdefault("traceId", trace_id)
+        raw_result.setdefault("executionTimeMs", duration_ms)
+        return raw_result
+
+    return {
+        "ok": True,
+        "tool": tool_name,
+        "result": raw_result,
+        "traceId": trace_id,
+        "executionTimeMs": duration_ms,
+    }

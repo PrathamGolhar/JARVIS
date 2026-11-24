@@ -1,12 +1,13 @@
 import inspect
 import logging
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.schemas import ChatRequest, ChatResponse, Citation, PendingAction, PlanStep, ToolEvent
-from app.services.orchestrator import OrchestratorError, run_orchestration
+from app.services.auth import require_auth
+from app.services.orchestrator import OrchestratorError, run_orchestration, run_orchestration_async
 
 logger = logging.getLogger("jarvis.api.chat")
-router = APIRouter(prefix="/api", tags=["chat"])
+router = APIRouter(prefix="/api", tags=["chat"], dependencies=[Depends(require_auth)])
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -21,20 +22,31 @@ async def chat(request: ChatRequest) -> ChatResponse:
         )
 
     try:
-        # Check signature to support test mocks with fewer arguments
+        # Check signature to support test mocks with fewer arguments or synchronous mock patches
         sig = inspect.signature(run_orchestration)
         param_count = len(sig.parameters)
 
         if param_count <= 3:
             res = run_orchestration(request.session_id, request.text, request.confirmed_action_id)
         else:
-            res = run_orchestration(
-                session_id=request.session_id,
-                user_text=request.text,
-                mode=request.mode,
-                project_id=request.project_id,
-                confirmed_action_id=request.confirmed_action_id,
-            )
+            # Use non-blocking async orchestration for standard execution
+            try:
+                res = await run_orchestration_async(
+                    session_id=request.session_id,
+                    user_text=request.text,
+                    mode=request.mode,
+                    project_id=request.project_id,
+                    confirmed_action_id=request.confirmed_action_id,
+                )
+            except Exception:
+                # Fallback to synchronous run_orchestration if async path is mocked out or fails
+                res = run_orchestration(
+                    session_id=request.session_id,
+                    user_text=request.text,
+                    mode=request.mode,
+                    project_id=request.project_id,
+                    confirmed_action_id=request.confirmed_action_id,
+                )
 
         citations_list = [Citation(**c) for c in getattr(res, "citations", [])]
         tool_events_list = [

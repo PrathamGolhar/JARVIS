@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import logging
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+from app.api.auth import router as auth_router
 from app.api.automation import router as automation_router
 from app.api.capabilities import router as capabilities_router
 from app.api.chat import router as chat_router
@@ -22,10 +24,58 @@ from app.api.settings_api import router as settings_router
 from app.api.speech import router as speech_router
 from app.api.study import router as study_router
 from app.api.web_actions import router as web_actions_router
+from app.core.errors import register_exception_handlers
+from app.core.middleware import register_middleware
+from app.services.maintenance import clean_stale_files
 from app.settings import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("jarvis.main")
+
+# ---------------------------------------------------------------------------
+# Daily disk-cleanup scheduler
+# Runs once at startup (dry_run so we can log what would be removed) then
+# every 24 h for real deletion.  Uses stdlib asyncio — no new dependency.
+# ---------------------------------------------------------------------------
+_CLEANUP_INTERVAL_SECONDS: int = 86_400  # 24 hours
+
+
+async def _run_daily_cleanup() -> None:
+    """Background task: clean stale generated and uploaded files every 24 h."""
+    # Immediate startup pass — real deletion to recover disk space after restarts
+    for target in (settings.generated_dir, settings.uploads_dir):
+        try:
+            summary = clean_stale_files(target_dir=target, max_age_days=7, dry_run=False)
+            if summary.files_removed or summary.errors:
+                logger.info(
+                    "Startup cleanup [%s]: removed=%d files, reclaimed=%d bytes, errors=%d",
+                    target.name,
+                    summary.files_removed,
+                    summary.bytes_reclaimed,
+                    len(summary.errors),
+                )
+                for err in summary.errors:
+                    logger.warning("Cleanup error: %s", err)
+        except Exception:
+            logger.exception("Startup cleanup failed for %s", target)
+
+    # Recurring daily pass
+    while True:
+        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
+        for target in (settings.generated_dir, settings.uploads_dir):
+            try:
+                summary = clean_stale_files(target_dir=target, max_age_days=7, dry_run=False)
+                logger.info(
+                    "Daily cleanup [%s]: removed=%d files, reclaimed=%d bytes, errors=%d",
+                    target.name,
+                    summary.files_removed,
+                    summary.bytes_reclaimed,
+                    len(summary.errors),
+                )
+                for err in summary.errors:
+                    logger.warning("Cleanup error: %s", err)
+            except Exception:
+                logger.exception("Daily cleanup failed for %s", target)
 
 
 @asynccontextmanager
@@ -36,8 +86,18 @@ async def lifespan(app: FastAPI):
     logger.info("  Data Dir: %s", settings.data_dir)
     logger.info("  Active AI Provider: %s", settings.ai_provider)
     logger.info("==================================================")
-    yield
-    logger.info("JARVIS Assistant shutting down.")
+
+    # Launch disk-cleanup background task; cancel it cleanly on shutdown
+    cleanup_task = asyncio.create_task(_run_daily_cleanup(), name="jarvis-disk-cleanup")
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("JARVIS Assistant shutting down.")
 
 
 app = FastAPI(
@@ -56,10 +116,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register Observability Middleware & Centralized Exception Handlers
+register_middleware(app)
+register_exception_handlers(app)
+
 from app.api.health import router as health_router
 
 # Include All Routers
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(files_router)
 app.include_router(generation_router)

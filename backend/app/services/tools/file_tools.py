@@ -14,7 +14,10 @@ ALLOWED_EXTENSIONS = {
 
 
 def _resolve_safe_path(target_path: str) -> Path:
-    """Ensure path is within authorized workspace root and prevent directory traversal."""
+    """Ensure path is within authorized workspace root and prevent directory traversal and symlink escapes."""
+    if "\0" in target_path:
+        raise PermissionError("Access denied. Path contains null bytes.")
+
     root = settings.workspace_root.resolve()
     candidate = Path(target_path)
     if not candidate.is_absolute():
@@ -22,11 +25,18 @@ def _resolve_safe_path(target_path: str) -> Path:
     else:
         candidate = candidate.resolve()
 
-    # Check that candidate starts with root
+    # Symlink and directory traversal escape check
     try:
         candidate.relative_to(root)
     except ValueError:
         raise PermissionError(f"Access denied. Path '{target_path}' is outside the authorized workspace directory.")
+
+    # Restrict direct access to protected sensitive files
+    lower_name = candidate.name.lower()
+    if lower_name.startswith(".env") and lower_name != ".env.example":
+        raise PermissionError("Modifying environment configuration files (.env) is prohibited for security.")
+    if lower_name.endswith((".pem", ".key", ".pfx", ".sqlite", ".db")):
+        raise PermissionError(f"Access denied. File '{candidate.name}' is a protected credential or database file.")
 
     return candidate
 

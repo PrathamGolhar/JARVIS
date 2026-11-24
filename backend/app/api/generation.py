@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas import (
     GenerateDocxRequest,
@@ -7,12 +7,13 @@ from app.schemas import (
     GenerateXlsxRequest,
     GeneratedFileItem,
 )
+from app.services.auth import require_auth
 from app.services.document_generation.docx_generator import generate_docx_document
 from app.services.document_generation.excel_generator import generate_excel_spreadsheet
 from app.services.document_generation.pdf_generator import generate_pdf_document
 from app.services.document_generation.pptx_generator import generate_pptx_presentation
 
-router = APIRouter(prefix="/api/generate", tags=["generation"])
+router = APIRouter(prefix="/api/generate", tags=["generation"], dependencies=[Depends(require_auth)])
 
 
 @router.post("/pdf")

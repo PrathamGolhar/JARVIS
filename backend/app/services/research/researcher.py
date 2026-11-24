@@ -17,29 +17,7 @@ from app.services.tools.web_search import live_web_search, _clean_search_query
 logger = logging.getLogger("jarvis.researcher")
 
 
-def is_safe_external_url(url: str) -> bool:
-    """Validate that a URL is a safe public HTTP/HTTPS endpoint (SSRF protection)."""
-    try:
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            return False
-        hostname = parsed.hostname
-        if not hostname:
-            return False
-        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
-            return False
-
-        try:
-            ip = ipaddress.ip_address(hostname)
-        except ValueError:
-            ip_str = socket.gethostbyname(hostname)
-            ip = ipaddress.ip_address(ip_str)
-
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
-            return False
-        return True
-    except Exception:
-        return False
+from app.services.security_network import is_safe_external_url, safe_http_fetch
 
 
 def extract_webpage_text(url: str, max_chars: int = 3000) -> str:
@@ -48,13 +26,9 @@ def extract_webpage_text(url: str, max_chars: int = 3000) -> str:
         return ""
 
     try:
-        resp = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=8,
-        )
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
+        status_code, html_text, _ = safe_http_fetch(url)
+        if status_code == 200:
+            soup = BeautifulSoup(html_text, "html.parser")
             for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
                 tag.extract()
             text = " ".join(soup.stripped_strings)

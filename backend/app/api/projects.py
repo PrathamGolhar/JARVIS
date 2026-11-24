@@ -1,9 +1,19 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.schemas import ProjectCreateRequest, ProjectItem
+from app.services.auth import require_auth
 from app.services.projects.manager import project_manager
+from app.settings import settings
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+router = APIRouter(prefix="/api/projects", tags=["projects"], dependencies=[Depends(require_auth)])
+
+
+def check_write_permission() -> None:
+    if getattr(settings, "permission_mode", "assisted") == "read_only":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project modifications are disabled in 'read_only' permission mode.",
+        )
 
 
 @router.get("", response_model=list[ProjectItem])
@@ -13,6 +23,7 @@ async def list_projects() -> list[ProjectItem]:
 
 @router.post("", response_model=ProjectItem)
 async def create_project(request: ProjectCreateRequest) -> ProjectItem:
+    check_write_permission()
     return project_manager.create_project(name=request.name, description=request.description)
 
 
@@ -26,6 +37,7 @@ async def get_project(project_id: str) -> ProjectItem:
 
 @router.post("/{project_id}/tasks")
 async def add_project_task(project_id: str, title: str, due_date: str | None = None) -> ProjectItem:
+    check_write_permission()
     proj = project_manager.add_task(project_id, title=title, due_date=due_date)
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found.")
@@ -34,6 +46,7 @@ async def add_project_task(project_id: str, title: str, due_date: str | None = N
 
 @router.patch("/{project_id}/tasks/{task_id}/toggle")
 async def toggle_project_task(project_id: str, task_id: str) -> ProjectItem:
+    check_write_permission()
     proj = project_manager.toggle_task(project_id, task_id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project or task not found.")
@@ -42,6 +55,7 @@ async def toggle_project_task(project_id: str, task_id: str) -> ProjectItem:
 
 @router.post("/{project_id}/link-file")
 async def link_project_file(project_id: str, filename: str) -> ProjectItem:
+    check_write_permission()
     proj = project_manager.link_file(project_id, filename)
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found.")
@@ -50,6 +64,7 @@ async def link_project_file(project_id: str, filename: str) -> ProjectItem:
 
 @router.post("/{project_id}/notes")
 async def update_project_notes(project_id: str, notes: str) -> ProjectItem:
+    check_write_permission()
     proj = project_manager.update_notes(project_id, notes)
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found.")

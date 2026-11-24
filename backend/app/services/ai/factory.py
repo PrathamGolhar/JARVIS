@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Any
@@ -146,6 +147,12 @@ def execute_with_failover(
             failures.append(f"{provider_name.upper()}: not configured")
             continue
 
+        # Circuit breaker fast-fail: skip tripped providers without hitting network
+        if not rec.circuit_breaker.can_execute():
+            failures.append(f"{provider_name.upper()}: skipped (circuit breaker {rec.circuit_breaker.state.value})")
+            logger.info("Skipping provider '%s' (circuit breaker %s; failing fast)", provider_name, rec.circuit_breaker.state.value)
+            continue
+
         # Skip known non-retryable failures
         if rec.error_category in (ErrorCategory.AUTHENTICATION, ErrorCategory.QUOTA_EXHAUSTED):
             failures.append(f"{provider_name.upper()}: skipped ({rec.error_category.value})")
@@ -206,3 +213,25 @@ def _classify_runtime_error(exc_str: str) -> ErrorCategory:
     if "network" in low or "connection" in low or "unreachable" in low:
         return ErrorCategory.NETWORK
     return ErrorCategory.UNKNOWN
+
+
+async def execute_with_failover_async(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    temperature: float = 0.3,
+    max_tokens: int = 800,
+    user_override: str | None = None,
+) -> tuple[AIChatResponse, str]:
+    """
+    Non-blocking asynchronous wrapper for execute_with_failover.
+    Executes synchronous AI provider network calls inside a worker thread pool,
+    preventing the FastAPI/asyncio event loop from blocking during generation.
+    """
+    return await asyncio.to_thread(
+        execute_with_failover,
+        messages=messages,
+        tools=tools,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        user_override=user_override,
+    )

@@ -1,13 +1,28 @@
 """
-Authoritative Capability, Permission, and Approved Action Registry for JARVIS.
+Authoritative Capability, Permission, and Action Security Policy Engine for JARVIS.
 
 Defines all legitimate, verified capabilities across Voice, AI, Tools, Web, Files, Desktop, TTS, and Visualizers.
-Ensures every intended system action is correctly approved, while sensitive operations strictly require user confirmation.
+Enforces server-side permissions across READ_ONLY, ASSISTED, and FULL_CONTROL modes.
+Provides fail-closed tool execution validation, audit logging, and an emergency stop kill-switch.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+import json
+import logging
+from typing import Any, Optional
+
+from app.settings import settings
+
+logger = logging.getLogger("jarvis.permissions")
+audit_logger = logging.getLogger("jarvis.audit")
+
+
+class PermissionMode(str, Enum):
+    READ_ONLY = "read_only"
+    ASSISTED = "assisted"
+    FULL_CONTROL = "full_control"
 
 
 class CapabilityCategory(str, Enum):
@@ -20,6 +35,7 @@ class CapabilityCategory(str, Enum):
     DESKTOP = "desktop"
     TTS = "tts"
     VISUALIZER = "visualizer"
+    CODING = "coding"
 
 
 class ApprovalStatus(str, Enum):
@@ -35,7 +51,8 @@ class Capability:
     category: CapabilityCategory
     description: str
     requires_confirmation: bool = False
-    tool_name: str | None = None
+    is_destructive_or_sensitive: bool = False
+    tool_name: Optional[str] = None
 
 
 # Authoritative Registry of ALL Legitimate Application Capabilities
@@ -56,7 +73,7 @@ APPROVED_CAPABILITIES: dict[str, Capability] = {
     "voice.vad.detect": Capability(
         name="voice.vad.detect",
         category=CapabilityCategory.VOICE,
-        description="Real-time Voice Activity Detection with 3-tier pause tolerance (1.2s short pause, 2.2s long pause, 2.8s end-of-speech).",
+        description="Real-time Voice Activity Detection with 3-tier pause tolerance.",
         requires_confirmation=False,
     ),
     "voice.speech.stream": Capability(
@@ -106,7 +123,7 @@ APPROVED_CAPABILITIES: dict[str, Capability] = {
     "ai.conversation.context": Capability(
         name="ai.conversation.context",
         category=CapabilityCategory.AI,
-        description="Inject contextual entity memory, pronouns, and system grounding rules into LLM orchestration.",
+        description="Inject contextual entity memory, preferences, and system grounding rules into LLM orchestration.",
         requires_confirmation=False,
     ),
     "ai.intent.understand": Capability(
@@ -118,7 +135,7 @@ APPROVED_CAPABILITIES: dict[str, Capability] = {
     "ai.response.generate": Capability(
         name="ai.response.generate",
         category=CapabilityCategory.AI,
-        description="Generate articulate, spoken plain-text voice replies via Groq LLM models.",
+        description="Generate articulate, spoken plain-text voice replies via Groq/Gemini models.",
         requires_confirmation=False,
     ),
 
@@ -150,6 +167,13 @@ APPROVED_CAPABILITIES: dict[str, Capability] = {
         description="Plan safe browser navigation destinations, YouTube, and Spotify search URLs.",
         requires_confirmation=False,
     ),
+    "web.deep_research": Capability(
+        name="web.deep_research",
+        category=CapabilityCategory.WEB,
+        description="Multi-source deep research with citation extraction.",
+        requires_confirmation=False,
+        tool_name="deep_web_research",
+    ),
 
     # 4. Safe Computation & System Diagnostics
     "math.calculator": Capability(
@@ -173,7 +197,7 @@ APPROVED_CAPABILITIES: dict[str, Capability] = {
         requires_confirmation=False,
     ),
 
-    # 5. Workspace Files
+    # 5. Workspace Files & Document Generation
     "files.search": Capability(
         name="files.search",
         category=CapabilityCategory.FILES,
@@ -193,13 +217,36 @@ APPROVED_CAPABILITIES: dict[str, Capability] = {
         category=CapabilityCategory.FILES,
         description="Upload and analyze user documents within workspace boundary.",
         requires_confirmation=False,
+        is_destructive_or_sensitive=True,
     ),
     "files.write": Capability(
         name="files.write",
         category=CapabilityCategory.FILES,
         description="Create or overwrite files in the workspace (Sensitive: requires explicit user confirmation).",
         requires_confirmation=True,
+        is_destructive_or_sensitive=True,
         tool_name="write_file",
+    ),
+    "files.generate_presentation": Capability(
+        name="files.generate_presentation",
+        category=CapabilityCategory.FILES,
+        description="Generate PowerPoint slides in generated folder.",
+        requires_confirmation=False,
+        tool_name="generate_presentation",
+    ),
+    "files.generate_pdf": Capability(
+        name="files.generate_pdf",
+        category=CapabilityCategory.FILES,
+        description="Generate PDF document in generated folder.",
+        requires_confirmation=False,
+        tool_name="generate_pdf_report",
+    ),
+    "files.generate_word": Capability(
+        name="files.generate_word",
+        category=CapabilityCategory.FILES,
+        description="Generate Word document in generated folder.",
+        requires_confirmation=False,
+        tool_name="generate_word_doc",
     ),
 
     # 6. Desktop Automation
@@ -208,10 +255,37 @@ APPROVED_CAPABILITIES: dict[str, Capability] = {
         category=CapabilityCategory.DESKTOP,
         description="Launch allowlisted Windows desktop applications (Calculator, Notepad, File Explorer, VS Code).",
         requires_confirmation=True,
+        is_destructive_or_sensitive=True,
         tool_name="open_application",
     ),
 
-    # 7. Text-to-Speech (TTS)
+    # 7. Code Execution & Sandboxing
+    "coding.execute": Capability(
+        name="coding.execute",
+        category=CapabilityCategory.CODING,
+        description="Execute code in sandboxed subprocess with strict AST validation.",
+        requires_confirmation=True,
+        is_destructive_or_sensitive=True,
+        tool_name="execute_python_code",
+    ),
+
+    # 8. Memory & Scheduler
+    "memory.set_preference": Capability(
+        name="memory.set_preference",
+        category=CapabilityCategory.AI,
+        description="Save user project preference or memory item.",
+        requires_confirmation=False,
+        tool_name="set_user_preference",
+    ),
+    "scheduler.create_reminder": Capability(
+        name="scheduler.create_reminder",
+        category=CapabilityCategory.SYSTEM,
+        description="Schedule user reminder.",
+        requires_confirmation=False,
+        tool_name="create_reminder",
+    ),
+
+    # 9. Text-to-Speech (TTS)
     "tts.synthesize": Capability(
         name="tts.synthesize",
         category=CapabilityCategory.TTS,
@@ -237,7 +311,7 @@ APPROVED_CAPABILITIES: dict[str, Capability] = {
         requires_confirmation=False,
     ),
 
-    # 8. Visualizer & UI
+    # 10. Visualizer & UI
     "visualizer.audio_reactive": Capability(
         name="visualizer.audio_reactive",
         category=CapabilityCategory.VISUALIZER,
@@ -284,16 +358,95 @@ def get_capability_for_tool(tool_name: str) -> Capability | None:
     return TOOL_TO_CAPABILITY.get(tool_name)
 
 
-def validate_tool_approval(tool_name: str) -> tuple[bool, bool, str]:
+def get_effective_permission_mode() -> PermissionMode:
+    """Retrieve current permission mode, guaranteed to fail-closed to READ_ONLY if invalid."""
+    mode_str = getattr(settings, "permission_mode", "assisted").lower().strip()
+    try:
+        return PermissionMode(mode_str)
+    except ValueError:
+        logger.error("Invalid permission mode '%s' in settings; failing closed to 'read_only'", mode_str)
+        return PermissionMode.READ_ONLY
+
+
+def trigger_emergency_stop() -> None:
+    """Instantly activate the emergency stop kill switch, halting all autonomous actions."""
+    settings.emergency_stop_active = True
+    logger.critical("EMERGENCY STOP TRIGGERED: All autonomous actions and tools disabled immediately.")
+    log_action_audit("SYSTEM", "emergency_stop_triggered", {}, "HALTED")
+
+
+def reset_emergency_stop() -> None:
+    """Deactivate emergency stop kill switch."""
+    settings.emergency_stop_active = False
+    logger.info("Emergency stop reset: Standard permission enforcement restored.")
+    log_action_audit("SYSTEM", "emergency_stop_reset", {}, "RESTORED")
+
+
+def log_action_audit(session_id: str, action: str, details: dict[str, Any], status: str) -> None:
+    """Structured audit log entry for security and compliance."""
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "session_id": str(session_id),
+        "action": action,
+        "mode": getattr(settings, "permission_mode", "unknown"),
+        "status": status,
+        "details": details,
+    }
+    audit_logger.info("AUDIT: %s", json.dumps(record, default=str))
+
+
+def validate_tool_approval(
+    tool_name: str,
+    arguments: Optional[dict[str, Any]] = None,
+    session_id: str = "general",
+) -> tuple[bool, bool, str]:
     """
-    Validate whether a tool is approved for execution.
+    Validate whether a tool is approved for execution under the active security policy.
     Returns: (is_approved, requires_confirmation, message)
+
+    Enforces:
+    1. Emergency Stop: Everything denied.
+    2. Unknown Tools: Denied by default (fail-closed, never inherits low-risk permissions).
+    3. READ_ONLY: Destructive/modifying tools strictly denied.
+    4. ASSISTED: Sensitive tools require explicit confirmation.
+    5. FULL_CONTROL: Allowed with audit logging.
     """
-    cap = get_capability_for_tool(tool_name)
+    if getattr(settings, "emergency_stop_active", False):
+        log_action_audit(session_id, tool_name, arguments or {}, "DENIED_EMERGENCY_STOP")
+        return False, False, "Operation denied: Emergency stop is active across all systems."
+
+    cap = TOOL_TO_CAPABILITY.get(tool_name)
     if not cap:
-        return False, False, f"Tool '{tool_name}' is not in the approved capabilities registry."
-    
-    if cap.requires_confirmation:
-        return True, True, f"Capability '{cap.name}' requires explicit user confirmation."
-    
-    return True, False, f"Capability '{cap.name}' is approved for immediate execution."
+        # Fail closed for any unknown or unregistered tool
+        log_action_audit(session_id, tool_name, arguments or {}, "DENIED_UNKNOWN_TOOL")
+        return False, False, f"Tool '{tool_name}' is not in the approved capabilities registry (denied by default)."
+
+    mode = get_effective_permission_mode()
+
+    # Rule 1: READ_ONLY mode
+    if mode == PermissionMode.READ_ONLY:
+        if cap.is_destructive_or_sensitive:
+            log_action_audit(session_id, tool_name, arguments or {}, "DENIED_READ_ONLY")
+            return (
+                False,
+                False,
+                f"Action '{tool_name}' is prohibited in 'read_only' permission mode (no modifications, code execution, or app launching permitted).",
+            )
+        log_action_audit(session_id, tool_name, arguments or {}, "APPROVED_READ_ONLY")
+        return True, False, f"Capability '{cap.name}' is approved for read-only execution."
+
+    # Rule 2: ASSISTED mode
+    if mode == PermissionMode.ASSISTED:
+        if cap.requires_confirmation or cap.is_destructive_or_sensitive:
+            log_action_audit(session_id, tool_name, arguments or {}, "REQUIRES_CONFIRMATION")
+            return True, True, f"Capability '{cap.name}' requires explicit user confirmation."
+        log_action_audit(session_id, tool_name, arguments or {}, "APPROVED_ASSISTED")
+        return True, False, f"Capability '{cap.name}' is auto-approved."
+
+    # Rule 3: FULL_CONTROL mode
+    if mode == PermissionMode.FULL_CONTROL:
+        log_action_audit(session_id, tool_name, arguments or {}, "APPROVED_FULL_CONTROL")
+        return True, False, f"Capability '{cap.name}' is approved under full control."
+
+    # Fallback fail-closed
+    return False, False, "Access denied by default security policy."

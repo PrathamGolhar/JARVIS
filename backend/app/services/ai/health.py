@@ -1,15 +1,15 @@
 """
-JARVIS 2.0 — Provider Health Abstraction.
+JARVIS 2.0 — Provider Health & Circuit Breaker Abstraction.
 
-Tracks real-time status, latency, and error classifications for each AI provider.
-This ensures the HUD and orchestrator report truthful provider state.
+Tracks real-time status, latency, error classifications, and circuit breaker states for each AI provider.
+Prevents cascading timeouts and resource starvation by failing fast when external APIs degrade.
 """
 from __future__ import annotations
 
-import logging
-import time
 from dataclasses import dataclass, field
 from enum import Enum
+import logging
+import time
 from typing import Any
 
 logger = logging.getLogger("jarvis.provider_health")
@@ -21,6 +21,12 @@ class ProviderStatus(str, Enum):
     UNAVAILABLE = "UNAVAILABLE"  # Not configured / missing API key
     FAILED = "FAILED"            # Hard failure (auth error, bad request)
     UNKNOWN = "UNKNOWN"          # Not yet tested
+
+
+class CircuitState(str, Enum):
+    CLOSED = "CLOSED"            # Normal operations: calls pass through
+    OPEN = "OPEN"                # Tripped: fail fast without making outbound network requests
+    HALF_OPEN = "HALF_OPEN"      # Testing: allow single probe call to test recovery
 
 
 class ErrorCategory(str, Enum):
@@ -36,8 +42,79 @@ class ErrorCategory(str, Enum):
 
 
 @dataclass
+class CircuitBreaker:
+    """
+    Automated circuit breaker protecting the assistant from unresponsive AI providers.
+    Transitions:
+      CLOSED -> OPEN (after failure_threshold consecutive errors)
+      OPEN -> HALF_OPEN (after cooldown_seconds)
+      HALF_OPEN -> CLOSED (on probe success) or OPEN (on probe failure)
+    """
+    failure_threshold: int = 3
+    cooldown_seconds: float = 30.0
+    state: CircuitState = CircuitState.CLOSED
+    consecutive_failures: int = 0
+    last_state_change: float = field(default_factory=time.time)
+
+    def can_execute(self) -> bool:
+        """Check if request is permitted to proceed to the provider."""
+        now = time.time()
+        if self.state == CircuitState.CLOSED:
+            return True
+
+        if self.state == CircuitState.OPEN:
+            if now - self.last_state_change >= self.cooldown_seconds:
+                logger.info("Circuit breaker entering HALF_OPEN probe state after %.1fs cooldown", self.cooldown_seconds)
+                self.state = CircuitState.HALF_OPEN
+                self.last_state_change = now
+                return True
+            return False
+
+        if self.state == CircuitState.HALF_OPEN:
+            # In half-open state, allow 1 test call
+            return True
+
+        return True
+
+    def record_success(self) -> None:
+        """Record successful execution, resetting circuit to CLOSED."""
+        if self.state != CircuitState.CLOSED:
+            logger.info("Provider recovered! Circuit breaker transitioning from %s to CLOSED", self.state.value)
+        self.state = CircuitState.CLOSED
+        self.consecutive_failures = 0
+        self.last_state_change = time.time()
+
+    def record_failure(self, category: ErrorCategory) -> None:
+        """Record an execution failure and trip circuit if threshold exceeded."""
+        self.consecutive_failures += 1
+        now = time.time()
+
+        # Immediate trip on fatal authentication or quota errors
+        if category in (ErrorCategory.AUTHENTICATION, ErrorCategory.QUOTA_EXHAUSTED):
+            self.state = CircuitState.OPEN
+            self.last_state_change = now
+            logger.warning("Circuit breaker immediately tripped to OPEN on non-retryable error: %s", category.value)
+            return
+
+        if self.state == CircuitState.HALF_OPEN:
+            # Probe failed — trip back to OPEN
+            self.state = CircuitState.OPEN
+            self.last_state_change = now
+            logger.warning("Circuit breaker probe failed; resetting to OPEN")
+            return
+
+        if self.consecutive_failures >= self.failure_threshold:
+            self.state = CircuitState.OPEN
+            self.last_state_change = now
+            logger.warning(
+                "Circuit breaker tripped to OPEN after %d consecutive failures",
+                self.consecutive_failures,
+            )
+
+
+@dataclass
 class ProviderHealthRecord:
-    """Live health state for a single AI provider."""
+    """Live health state and operational telemetry for a single AI provider."""
     provider_name: str
     status: ProviderStatus = ProviderStatus.UNKNOWN
     configured: bool = False
@@ -49,6 +126,11 @@ class ProviderHealthRecord:
     consecutive_failures: int = 0
     request_count: int = 0
     success_count: int = 0
+    circuit_breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
+
+    def can_execute(self) -> bool:
+        """Check if provider is available and circuit is not open."""
+        return self.configured and self.circuit_breaker.can_execute()
 
     def record_success(self, latency_ms: float) -> None:
         self.status = ProviderStatus.HEALTHY
@@ -59,6 +141,7 @@ class ProviderHealthRecord:
         self.error_message = ""
         self.request_count += 1
         self.success_count += 1
+        self.circuit_breaker.record_success()
 
     def record_failure(self, category: ErrorCategory, message: str) -> None:
         self.last_failure_ts = time.time()
@@ -66,6 +149,8 @@ class ProviderHealthRecord:
         self.error_message = message
         self.consecutive_failures += 1
         self.request_count += 1
+        self.circuit_breaker.record_failure(category)
+
         # Non-retryable errors go straight to FAILED
         if category in (ErrorCategory.AUTHENTICATION, ErrorCategory.QUOTA_EXHAUSTED):
             self.status = ProviderStatus.FAILED
@@ -77,6 +162,7 @@ class ProviderHealthRecord:
             "provider": self.provider_name,
             "status": self.status.value,
             "configured": self.configured,
+            "circuitState": self.circuit_breaker.state.value,
             "lastSuccessAgo": f"{int(time.time() - self.last_success_ts)}s ago" if self.last_success_ts else "never",
             "lastLatencyMs": round(self.last_latency_ms, 1),
             "consecutiveFailures": self.consecutive_failures,

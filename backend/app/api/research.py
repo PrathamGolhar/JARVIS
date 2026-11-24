@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas import ResearchRequest, ResearchResponse
+from app.services.auth import require_auth
 from app.services.research.researcher import perform_deep_research
 
-router = APIRouter(prefix="/api/research", tags=["research"])
+router = APIRouter(prefix="/api/research", tags=["research"], dependencies=[Depends(require_auth)])
 
 
 @router.post("/deep", response_model=ResearchResponse)
